@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
@@ -13,6 +14,33 @@ import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 
 const CLAUDE_DEFAULT_MODEL = "claude-sonnet-4-6";
 const RUNS_DIR = path.join("data", "subagent-runs");
+
+// Claude-CLI-routed subagents run as a bare `claude -p` subprocess with no
+// path back into any pi-registered tool, so record_cycle has to reach them
+// through a real MCP server instead (mcp/record-cycle-server/). Claude Code
+// exposes MCP tools under a server-name-prefixed identifier
+// (mcp__<server>__<tool>, confirmed live: "mcp__record-cycle__record_cycle"),
+// so matching on toolName needs to check for that suffix too, not just the
+// bare name the native pi tool uses.
+const RECORD_CYCLE_MCP_SERVER_PATH = fileURLToPath(new URL("./mcp/record-cycle-server/server.mjs", import.meta.url));
+
+function isRecordCycleToolName(name: unknown): boolean {
+  return name === "record_cycle" || (typeof name === "string" && name.endsWith("__record_cycle"));
+}
+
+// --strict-mcp-config confines the Claude subprocess to exactly this one
+// server — none of the user's own configured MCP servers (Notion, GitHub,
+// etc.) leak into a subagent run, matching the same restrictive posture the
+// native pi path gets from its --tools allowlist.
+function writeRecordCycleMcpConfig(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-mcp-"));
+  const configPath = path.join(dir, "mcp-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({ mcpServers: { "record-cycle": { command: "node", args: [RECORD_CYCLE_MCP_SERVER_PATH] } } }, null, 2),
+  );
+  return configPath;
+}
 
 type RunStatus = "running" | "completed" | "incomplete" | "failed" | "canceled";
 type RunMode = "single";
@@ -199,13 +227,13 @@ function hasSuccessfulCycleRecord(messages: Message[], expectedStage: string): b
   for (const msg of messages as any[]) {
     if (msg?.role !== "assistant" || !Array.isArray(msg?.content)) continue;
     for (const part of msg.content) {
-      if (part?.type === "toolCall" && part?.name === "record_cycle" && part?.id) {
+      if (part?.type === "toolCall" && isRecordCycleToolName(part?.name) && part?.id) {
         stageByCallId.set(part.id, (part?.arguments as any)?.stage);
       }
     }
   }
   return messages.some((msg: any) => {
-    if (msg?.role !== "toolResult" || msg?.toolName !== "record_cycle" || msg?.isError) return false;
+    if (msg?.role !== "toolResult" || !isRecordCycleToolName(msg?.toolName) || msg?.isError) return false;
     return stageByCallId.get(msg?.toolCallId) === expectedStage;
   });
 }
@@ -511,11 +539,27 @@ async function spawnClaudeAgent(
   const model = agent.model || CLAUDE_DEFAULT_MODEL;
   result.model = model;
 
+  const mcpConfigPath = writeRecordCycleMcpConfig();
+
   const child = spawn(
     "claude",
-    ["-p", "--model", model, "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"],
+    [
+      "-p",
+      "--model", model,
+      "--dangerously-skip-permissions",
+      "--output-format", "stream-json",
+      "--verbose",
+      "--mcp-config", mcpConfigPath,
+      "--strict-mcp-config",
+    ],
     { cwd, shell: false, stdio: ["pipe", "pipe", "pipe"], env: scopedEnv() },
   );
+
+  const cleanupMcpConfig = () => {
+    try {
+      fs.rmSync(path.dirname(mcpConfigPath), { recursive: true, force: true });
+    } catch {}
+  };
 
   record.pid = child.pid;
   saveRun(record);
@@ -674,6 +718,7 @@ async function spawnClaudeAgent(
       }
       saveRun(record);
       flushUpdate();
+      cleanupMcpConfig();
     })();
   });
 
@@ -684,6 +729,7 @@ async function spawnClaudeAgent(
       record.status = "failed";
     }
     saveRun(record);
+    cleanupMcpConfig();
   });
 
   const prompt = agent.systemPrompt?.trim()

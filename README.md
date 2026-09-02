@@ -33,9 +33,19 @@ your own `~/.pi/agent/` directory.
   - `cycle-records.ts` — registers the `record_cycle` tool: the actual,
     machine-verified way Planner/Developer/Tester write their DB records,
     replacing freehand `sqlite3` calls the model used to construct itself.
-    `lifecycle-subagent` checks whether this tool was actually called before
-    reporting a run `completed` — a subagent's own closing message is never
-    trusted as proof the DB record exists.
+    `lifecycle-subagent` checks whether this tool was actually called (and
+    for the right stage — a Developer can't attribute a row to Tester by
+    passing the wrong stage) before reporting a run `completed`; a
+    subagent's own closing message is never trusted as proof the DB record
+    exists.
+  - `mcp/record-cycle-server/` — a standalone MCP server exposing that same
+    `record_cycle` capability to Claude-CLI-routed subagents, which run as a
+    bare `claude -p` subprocess with no path back into any pi-registered
+    tool. `lifecycle-subagent` wires it in automatically via `--mcp-config`
+    (confined with `--strict-mcp-config` so a subagent run never inherits
+    your own configured MCP servers) whenever a role's runner is
+    `claude-cli` — no setup needed beyond `npm install` in that directory
+    (done for you by `install.sh`).
   - `subagent-status.ts` — a live status ticker (2–3 lines, fixed height)
     shown above the editor while a background subagent runs, so the lead
     session isn't a black box while something else works.

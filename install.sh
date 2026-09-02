@@ -22,6 +22,9 @@ echo "Installing core patch pack..."
 cp -R "$REPO_DIR"/patches/. "$AGENT_DIR/patches/"
 chmod +x "$AGENT_DIR/patches/reapply.sh" "$AGENT_DIR/patches/self-heal.sh"
 
+echo "Installing record_cycle's MCP server dependencies (needed for Developer runs routed through Claude CLI)..."
+( cd "$AGENT_DIR/extensions/mcp/record-cycle-server" && npm install --omit=dev >/dev/null )
+
 copy_if_absent() {
   local src="$1" dest="$2"
   if [[ -f "$dest" ]]; then

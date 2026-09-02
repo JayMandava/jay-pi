@@ -1,0 +1,9 @@
+{
+  "name": "record-cycle-mcp-server",
+  "private": true,
+  "type": "module",
+  "description": "Standalone MCP server exposing record_cycle to Claude-CLI-routed subagents, which have no path back into pi's own registered tools. Not published; used locally via --mcp-config.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}
