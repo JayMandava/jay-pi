@@ -319,8 +319,8 @@ Preferred lifecycle loop:
 6. if the human has feedback, Lead routes it back to Planner; repeat until the human gives a green flag
 7. once approved, Planner offers to log **Plan of Action** to the external sink (External Sink Content Rules preview first, if one is configured)
 8. Lead delegates implementation to Developer
-9. Developer auto-handoff arrives — Lead surfaces the result to the human as a grilling session
-10. once approved, Developer writes to `data/implementation.db` and offers to log **Implementation Notes** to the external sink
+9. Developer's run writes to `data/implementation.db` via `record_cycle` before it finishes (not gated on approval — Developer's process exits before approval happens), then auto-handoff arrives — Lead surfaces the result to the human as a grilling session
+10. once approved, Developer offers to log **Implementation Notes** to the external sink
 11. the human may review implementation directly, or Lead may invoke Tester
 12. Tester validates implementation and writes findings to `data/feedback.db`
 13. Tester auto-handoff arrives — Lead surfaces findings to the human as a grilling session
@@ -514,8 +514,8 @@ For a new project, the harness should do this:
 2. resolve and silently adopt the session agent profile (session > project > global) when the session starts
 3. Planner creates an Approach record in `data/approach.db`
 4. human approves the plan via a grilling session; Planner offers to log Plan of Action to the external sink
-5. Developer executes implementation/testing work
-6. human approves Developer's output; Developer writes to `data/implementation.db` and offers to log Implementation Notes to the external sink
+5. Developer executes implementation/testing work and writes to `data/implementation.db` before finishing (not gated on approval)
+6. human approves Developer's output; Developer offers to log Implementation Notes to the external sink
 7. Tester creates Feedback records in `data/feedback.db`
 8. human approves Tester's findings; Tester offers to log Observations to the external sink
 9. Lead runs the final PR review, writes to `data/review.db`, and offers to log PR Review to the external sink once approved

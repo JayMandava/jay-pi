@@ -98,9 +98,11 @@ export default function cycleRecords(pi: ExtensionAPI) {
 			const insertSql = `INSERT INTO cycles (cycle_id, role, stage, summary, payload, created_at) VALUES (${
 				cycleId ? quoteSqlString(cycleId) : "NULL"
 			}, ${quoteSqlString(role)}, ${quoteSqlString(params.stage)}, ${quoteSqlString(summary)}, ${quoteSqlString(payload)}, ${quoteSqlString(createdAt)});`;
-			execFileSync("sqlite3", [dbPath, insertSql]);
-
-			const rowId = execFileSync("sqlite3", [dbPath, "SELECT last_insert_rowid();"]).toString().trim();
+			// last_insert_rowid() is scoped to the connection that did the insert —
+			// a separate `sqlite3` invocation opens a new connection and always
+			// reports 0. Run both statements in one invocation so they share a
+			// connection.
+			const rowId = execFileSync("sqlite3", [dbPath, `${insertSql}\nSELECT last_insert_rowid();`]).toString().trim();
 
 			return {
 				content: [

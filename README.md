@@ -119,6 +119,29 @@ empty. If you have third-party service credentials sitting in your own
 their env-var prefixes there so background Planner/Developer/Tester
 processes don't inherit them.
 
+## Security posture — read before you install
+
+This ships permissive by default, on purpose (it's built for a personal or
+small-team setup where the human is already trusted), but that means two
+things are worth knowing rather than discovering later:
+
+- **Every background Planner/Developer/Tester process inherits your full
+  environment** unless you fill in `ENV_DENYLIST_PREFIXES` above. That
+  includes any API keys, tokens, or credentials sitting in your shell
+  environment or `mcp.json` — a coding subagent doesn't need most of them.
+- **The Claude CLI runner path** (`runner: "claude-cli"` in a role's
+  frontmatter, used when Developer's execution path is set to Claude)
+  invokes `claude -p --dangerously-skip-permissions` — it does not prompt
+  for individual tool approvals. That's what makes unattended background
+  runs possible at all, but it means a Claude-routed subagent can run any
+  tool without a per-call confirmation.
+
+Neither of these is hidden — they're both plainly visible in
+`extensions/lifecycle-subagent/index.ts` — but they're easy to miss if you
+only read the feature list above. If you're running this somewhere
+credentials or blast radius actually matter, fill in the env denylist (or
+build it out into a real allowlist) before you rely on background runs.
+
 ## Credits
 
 - Built on [pi](https://github.com/earendil-works/pi-coding-agent) by
