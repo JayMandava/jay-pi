@@ -38,7 +38,6 @@ const RecordCycleParams = Type.Object({
 				"Story/ticket id plus revision suffix, e.g. US-13647-R1 (see the Plan identity rule in AGENTS.md). Recommended once a project has adopted it; fine to omit during early/informal adoption.",
 		}),
 	),
-	role: Type.Optional(Type.String({ description: "Who is writing this record (planner/developer/tester/lead). Defaults to the stage's usual owner." })),
 	summary: Type.String({
 		description: `One-paragraph human-readable summary of this record (minimum ${MIN_SUMMARY_CHARS} characters — a thin summary is rejected).`,
 	}),
@@ -90,7 +89,12 @@ export default function cycleRecords(pi: ExtensionAPI) {
 			const dbPath = path.join(dbDir, stageInfo.db);
 			ensureTable(dbPath);
 
-			const role = params.role?.trim() || stageInfo.defaultRole;
+			// role is derived strictly from stage, never a caller-supplied value —
+			// stage implies role in this fixed lifecycle (approach/planner,
+			// implementation/developer, feedback/tester, review/lead), and letting
+			// a caller override it would let e.g. a Developer attribute its own
+			// implementation row to "tester".
+			const role = stageInfo.defaultRole;
 			const payload = JSON.stringify(params.data ?? {});
 			const createdAt = new Date().toISOString();
 			const cycleId = params.cycleId?.trim() ?? null;
