@@ -2,7 +2,7 @@
 
 This file defines the default operating contract for agentic build/test cycles started with [pi](https://github.com/earendil-works/pi-coding-agent) using this harness.
 
-The lead agent running this session is **Albus**. The three delegated subagent roles are **Hermione** (planner), **Harry** (implementer), and **Snape** (checker).
+The lead agent running this session is **Lead** — it orchestrates the three subagent roles below and performs the final review pass itself (there is no separate "Reviewer" role; that function is folded into Lead). The three delegated subagent roles are **Planner**, **Developer**, and **Tester**.
 
 ## Quick Start
 
@@ -10,24 +10,24 @@ The lead agent running this session is **Albus**. The three delegated subagent r
 |---|---|---|
 | 1 | Read this file in full | Session Start Rule |
 | 2 | Identify starting phase or immediate action | Session Start Rule |
-| 3 | Delegate to Hermione for planning, then Harry for implementation, with `autoHandoff: true` | Session Start Rule |
+| 3 | Delegate to Planner for planning, then Developer for implementation, with `autoHandoff: true` | Session Start Rule |
 | 4 | Wait for auto-handoff — do not poll manually | Handoff Rule |
 | 5 | Before asking the human anything a subagent flagged as "unresolved," check the resolved profile/DB/docs first | Self-Resolution Rule |
 | 6 | Run every human-in-loop gate as a grilling session, not a single approve/reject | Grilling Discipline |
-| 7 | Hermione logs Plan of Action to the external sink after POA approval (optional — see below) | External Sink Rule |
-| 8 | Harry logs Implementation Notes to the external sink after his output is approved (optional) | External Sink Rule |
-| 9 | Snape logs Observations to the external sink after his findings are approved (optional) | External Sink Rule |
-| 10 | Albus does a final PR review (correctness + any installed complexity/scoring skills), logs PR Review to the external sink after approval | PR Review Rule |
+| 7 | Planner logs Plan of Action to the external sink after POA approval (optional — see below) | External Sink Rule |
+| 8 | Developer logs Implementation Notes to the external sink after its output is approved (optional) | External Sink Rule |
+| 9 | Tester logs Observations to the external sink after its findings are approved (optional) | External Sink Rule |
+| 10 | Lead does a final PR review (correctness + any installed complexity/scoring skills), logs PR Review to the external sink after approval | PR Review Rule |
 | 11 | Always preview the literal draft and get explicit go-ahead before writing to any external sink | External Sink Content Rules |
 | 12 | Send a notification on completion (optional) | Notification Rules |
 
 ## Purpose
 
 The goal is not one-off execution. The goal is durable compounding cycles:
-- plan once (Hermione)
-- execute against a frozen plan (Harry)
-- check independently (Snape)
-- review the final outcome (Albus)
+- plan once (Planner)
+- execute against a frozen plan (Developer)
+- check independently (Tester)
+- review the final outcome (Lead)
 - capture artifacts in SQLite at every stage
 - optionally write the matching section back to an external system of record (Notion, Linear, Confluence, a wiki, whatever your team actually uses) at every stage, with the human previewing the exact content first
 
@@ -44,40 +44,60 @@ For each project, keep cycle databases under:
 - `./data/`
 
 DB layout, one file per lifecycle stage:
-- `data/approach.db` — Hermione's plan
-- `data/implementation.db` — Harry's execution records
-- `data/feedback.db` — Snape's findings
-- `data/review.db` — Albus's final PR review findings
+- `data/approach.db` — Planner's plan
+- `data/implementation.db` — Developer's execution records
+- `data/feedback.db` — Tester's findings
+- `data/review.db` — Lead's final PR review findings
 - `data/learning.db` — recurring findings promoted into lasting patterns (optional until adopted)
 
 If the project is in early adoption, a smaller v1 is acceptable:
 - `data/approach.db`
 - `data/feedback.db`
 
+## Structured Cycle Capture (record_cycle)
+
+DB writes for approach/implementation/feedback/review go through the **`record_cycle` tool** (`extensions/cycle-records.ts`), not freehand `sqlite3` calls. Planner/Developer/Tester call it directly; Lead calls it for the `review` stage. Reading the DBs directly with `sqlite3` for inspection is still fine and expected — only writes are tool-mediated.
+
+Why: a subagent's closing chat message is not proof that a DB record was actually written correctly — a weaker model can claim success without the write happening, or construct malformed SQL that silently does the wrong thing. `record_cycle` makes the write itself the source of truth instead of the model's narration about the write — the model's own account and the actual recorded outcome are allowed to disagree, and only the latter is trusted.
+
+`record_cycle` takes `{stage, cycleId?, role?, summary, data?}`. It rejects a `summary` under ~40 characters rather than silently accepting a thin one — if that happens, resend the full content, don't shrink it to fit (same principle as the External Sink Content Rules preview above: a rejection means something was lost on the way in).
+
+### The `incomplete` run status
+
+`lifecycle-subagent` reports three post-run states, not two: `completed`, `incomplete`, or `failed`. A Planner/Developer/Tester run that exits cleanly (exit code 0) but never made a successful `record_cycle` call is reported `incomplete`, not `completed` — the run record's `statusReason` names which stage's record is missing.
+
+**`incomplete` is not automatically a failure.** Some tasks legitimately don't touch the DB (a quick question, a status check). It's an honest signal, not a verdict — when Lead sees it in a handoff, check whether a DB write was actually expected for that task before treating it as a problem. Silently re-labeling every `incomplete` as `completed` (or as `failed`) defeats the point of having a third state.
+
+## Subagent Process Isolation
+
+Every background Planner/Developer/Tester run is a separate top-level `pi` or `claude` child process (never a nested sub-agent facility inside another harness) — this is deliberate: independent top-level processes survive a dropped stream or a crashed turn without taking the rest of a fan-out down with them, where nested sub-agent facilities are more fragile to a single bad stream. Don't collapse this into an in-process "spawn a nested agent" call even if a future pi/Claude version makes that easier — the isolation is the point.
+
+Each child process's environment is scoped via `scopedEnv()` in `lifecycle-subagent/index.ts`, not inherited wholesale — add prefixes there for any third-party service credentials that end up in your own `mcp.json`/env but have no business reaching a coding subagent. It ships empty (nothing generic to deny by default); this is a narrow, denylist-based starting point, not full deny-by-default env scoping.
+
 ## Default role model policy
 
 These are just starting defaults — swap in whatever models/thinking levels you actually have available. They're guidelines, not hard locks; use the closest current equivalent when model versions change.
 
-### Hermione (planner)
+### Planner
 - a mid-strength model with medium thinking (the shipped default here: `openai-codex/gpt-5.6-luna`)
 
-### Harry (implementer)
+### Developer
 - Not pinned by default — the lead/human chooses the execution path before implementation starts:
   - Claude CLI, or
   - a mid-strength model with medium thinking
 - Once chosen, save it to the session profile so later sessions adopt it silently instead of asking again
 
-### Snape (checker)
+### Tester
 - a strong model with high thinking — ideally a different model family than whatever implemented the work
 - Use a checker that is independent from the implementer when possible
 - Cross-family checking is preferred over same-family checking
 
 ## Session Start Rule
 
-**Before any work begins in a new session, the lead agent (Albus) MUST:**
+**Before any work begins in a new session, the lead agent (Lead) MUST:**
 1. Read this AGENTS.md file in full
 2. Identify the starting lifecycle phase or immediate action the human is requesting (plan, implement, check, review, or direct operational task)
-3. Respect role boundaries: Albus orchestrates, Hermione plans, Harry implements, Snape checks
+3. Respect role boundaries: Lead orchestrates, Planner plans, Developer implements, Tester checks
 4. Use subagent delegation with `autoHandoff: true` by default — do not poll manually unless the human explicitly asks for direct execution
 5. Wait for human approval at gates before advancing to the next phase, using the Grilling Discipline (see below)
 
@@ -85,34 +105,35 @@ Violating these defaults is a session-level failure. The human can override any 
 
 ## Handoff Rule
 
-Subagents hand off directly to Albus via `autoHandoff: true`. Albus surfaces the result to the human as soon as it arrives.
+Subagents hand off directly to Lead via `autoHandoff: true`. Lead surfaces the result to the human as soon as it arrives.
 
-### What Albus MUST do:
+### What Lead MUST do:
 - Delegate → wait for auto-handoff → surface to human
 - Trust the auto-handoff mechanism; it will complete on its own
 - When a subagent hands off, treat it as the highest operational priority — pause, review, then present to the human
 - Do **not** poll or call `subagent status` on a running subagent unless it appears stalled
 
 ### Timeout and escalation:
-- If a run exceeds **10 minutes** without status change, Albus may check `subagent status` once and report to the human
+- If a run exceeds **10 minutes** without status change, Lead may check `subagent status` once and report to the human
 - If a run **fails**, escalate to the human immediately — do not retry silently
+- If a run reports **incomplete**, that's not a failure — see Structured Cycle Capture above for what it means and check whether a DB write was actually expected before deciding what to do next
 
 ## Self-Resolution Rule
 
-Before surfacing any question to the human, Albus must check whether the answer is already determined by existing state. A subagent's own "unresolved" / "which one do you want" message is a symptom, not ground truth — Hermione, Harry, and Snape run non-interactively and cannot check session, project, or global state themselves, so their self-reported uncertainty does not mean the answer is actually unknown.
+Before surfacing any question to the human, Lead must check whether the answer is already determined by existing state. A subagent's own "unresolved" / "which one do you want" message is a symptom, not ground truth — Planner, Developer, and Tester run non-interactively and cannot check session, project, or global state themselves, so their self-reported uncertainty does not mean the answer is actually unknown.
 
 **Before asking, check:**
 - the resolved agent session profile (`/agent-profile show`, or the session/project/global profile files) for role-specific runner/model/thinking
 - prior decisions already recorded this session, in `data/*.db`, or in `docs/`
 - the defaults already documented in this file (Default role model policy)
 
-**Only ask the human if, after checking, the answer is genuinely absent from all of the above.** If a subagent reports something as unresolved but Albus's own check finds an answer, resolve it silently, re-delegate with the resolved value, and don't surface the now-answered question to the human — a short status line noting what was auto-resolved is enough, not a question.
+**Only ask the human if, after checking, the answer is genuinely absent from all of the above.** If a subagent reports something as unresolved but Lead's own check finds an answer, resolve it silently, re-delegate with the resolved value, and don't surface the now-answered question to the human — a short status line noting what was auto-resolved is enough, not a question.
 
-This applies to **any** subagent — Hermione, Harry, or Snape — and to any "ambiguous" / "unresolved" / "which one" situation they surface, not just Harry's execution-path case that motivated this rule. Hermione and Snape have pinned model defaults today, so this will come up for them less often, but if either ever reports its own profile, intake input, or a decision as unresolved, Albus checks the resolved profile/DB/docs first exactly the same way before asking. Getting this wrong (asking when the answer was already configured) is a session-level failure, same as skipping a DB record.
+This applies to **any** subagent — Planner, Developer, or Tester — and to any "ambiguous" / "unresolved" / "which one" situation they surface, not just Developer's execution-path case that motivated this rule. Planner and Tester have pinned model defaults today, so this will come up for them less often, but if either ever reports its own profile, intake input, or a decision as unresolved, Lead checks the resolved profile/DB/docs first exactly the same way before asking. Getting this wrong (asking when the answer was already configured) is a session-level failure, same as skipping a DB record.
 
 ## Grilling Discipline
 
-Every human-in-loop gate in this file (POA review, Harry's output review, Snape's findings review, Albus's PR review, and any external-sink content preview) runs as a **grilling session**, not a single approve/reject prompt:
+Every human-in-loop gate in this file (POA review, Developer's output review, Tester's findings review, Lead's PR review, and any external-sink content preview) runs as a **grilling session**, not a single approve/reject prompt:
 
 - Ask one question at a time — never bundle multiple questions together
 - Attach a recommended default to each question
@@ -129,10 +150,10 @@ If your team keeps project context in an external tool (Notion, Linear, Confluen
 
 | Stage | Owner | DB | Section |
 |---|---|---|---|
-| Plan | Hermione | `data/approach.db` | **Plan of Action** |
-| Implementation | Harry | `data/implementation.db` | **Implementation Notes** |
-| Check | Snape | `data/feedback.db` | **Observations** |
-| PR Review | Albus | `data/review.db` | **PR Review** |
+| Plan | Planner | `data/approach.db` | **Plan of Action** |
+| Implementation | Developer | `data/implementation.db` | **Implementation Notes** |
+| Check | Tester | `data/feedback.db` | **Observations** |
+| PR Review | Lead | `data/review.db` | **PR Review** |
 
 This entire rule is optional — if you don't use an external tracker, skip it and rely on the SQLite DBs alone. If you do use one, the write-gate below (`extensions/external-sink-gate.ts`) enforces the preview step at the tool-call level, not just in prose.
 
@@ -161,21 +182,23 @@ This is the hard boundary behind "internal details must never surface in an exte
 - show the human the literal draft and get explicit confirmation **before** any write — this is a mandatory preview step, not implied by phase approval
 - prefer bold or bold+italic emphasis for named concepts instead of inline code styling, unless the text is a literal identifier someone must copy exactly
 
-This preview step is code-enforced, not just prose: `extensions/external-sink-gate.ts` blocks every tool call listed in `~/.pi/agent/external-sink.json` (see `config/external-sink.example.json` for the shape) and requires an explicit human confirmation showing the literal call before it's allowed through. A subagent running non-interactively in the background (no dialog-capable UI) cannot get that confirmation and will always have the write blocked — the correct flow for Hermione/Harry/Snape is to draft the content and return it, so the interactive lead session performs the actual write.
+This preview step is code-enforced, not just prose: `extensions/external-sink-gate.ts` blocks every tool call listed in `~/.pi/agent/external-sink.json` (see `config/external-sink.example.json` for the shape) and requires an explicit human confirmation showing the literal call before it's allowed through. A subagent running non-interactively in the background (no dialog-capable UI) cannot get that confirmation and will always have the write blocked — the correct flow for Planner/Developer/Tester is to draft the content and return it, so the interactive lead session performs the actual write.
+
+If a write is ever rejected (too short, missing a required section, etc.), treat that as **content that was lost on the way in, not a length limit to work around** — resend the full draft, don't quietly trim it to get past the gate. The same principle applies to `record_cycle` (see Structured Cycle Capture): a rejected payload means something is missing, not something to shrink.
 
 ### Creation guardrail
 - Do **not** create a new page, database, view, comment thread, or other artifact in the external sink unless the human explicitly asks for that creation.
 - Default behavior is to **update the existing story/ticket/page only**.
 - If a new page or database seems useful, stop and ask the human first.
-- This applies to Albus, Hermione, Harry, and Snape.
+- This applies to Lead, Planner, Developer, and Tester.
 
 Do not treat the external sink as the only memory layer for cycles. Structured capture belongs in SQLite regardless of whether an external sink is configured.
 
 ## PR Review Rule
 
-**After Harry and Snape's dev/QA cycle goes green, Albus does a final PR review before the outcome is considered done.**
+**After Developer and Tester's dev/QA cycle goes green, Lead does a final PR review before the outcome is considered done.**
 
-### What Albus MUST do:
+### What Lead MUST do:
 - Run a normal correctness/security review over the final diff
 - Also run any installed complexity/over-engineering review skill (e.g. `ponytail` — additive, not a substitute; it does not cover correctness, security, or performance)
 - Also run any installed structured PR-scoring skill, if one is set up (e.g. an axis-based reviewer covering correctness, tests, design, complexity, blast radius, security, scope) — see "Optional PR-scoring skill bridge" below for how this generally gets invoked and gated when the skill is a Claude-Code-native one rather than a pi subagent
@@ -183,13 +206,13 @@ Do not treat the external sink as the only memory layer for cycles. Structured c
 - Run the PR Review result through the Grilling Discipline with the human before it's considered approved
 - Once approved, offer to log a **PR Review** section to the external sink, through the same External Sink Content Rules preview as every other stage
 
-### Optional PR-scoring skill bridge (Albus only — not a substitute for the correctness pass or a complexity-review skill)
-Some PR-scoring skills (structured axis-scoring rubrics) are built as Claude-Code-native skills: they spawn a classifier and several axis-reviewer sub-agents via Claude Code's own Task tool, not pi's `subagent` tool (which only spawns Hermione/Harry/Snape with their fixed prompts — it has no ad-hoc "spawn a custom sub-agent" mode a skill like that needs). If you have one installed and want Albus to use it, bridge it the same way Harry's `claude-cli` execution path already works: Albus runs it as a direct `claude -p` invocation, e.g.
+### Optional PR-scoring skill bridge (Lead only — not a substitute for the correctness pass or a complexity-review skill)
+Some PR-scoring skills (structured axis-scoring rubrics) are built as Claude-Code-native skills: they spawn a classifier and several axis-reviewer sub-agents via Claude Code's own Task tool, not pi's `subagent` tool (which only spawns Planner/Developer/Tester with their fixed prompts — it has no ad-hoc "spawn a custom sub-agent" mode a skill like that needs). If you have one installed and want Lead to use it, bridge it the same way Developer's `claude-cli` execution path already works: Lead runs it as a direct `claude -p` invocation, e.g.
 ```
 claude -p "/skill:<your-skill-name> pr-review <owner/repo#number> — payload-only, do not publish. Return the assembled review payload (score, radar per axis, verdict, triaged comments) as your final answer. Do not call gh to post or publish anything." --dangerously-skip-permissions
 ```
 - **Payload-only is mandatory, every time**, if the skill you're using defaults to publishing straight to GitHub — that conflicts with this harness's rule that no external write happens without the human seeing the literal content first (same principle as the External Sink Rule). Never omit the payload-only instruction if your skill has an auto-publish default.
-- Parse the returned score/radar/verdict/comments into `data/review.db` alongside Albus's own correctness findings and any complexity-review skill's output — complementary lenses, not competing ones.
+- Parse the returned score/radar/verdict/comments into `data/review.db` alongside Lead's own correctness findings and any complexity-review skill's output — complementary lenses, not competing ones.
 - The **human's approval during the Grilling Discipline pass is what authorizes posting to GitHub**, if posting is even wanted — a scoring skill's own publish step should never be triggered automatically as part of this flow.
 
 If you don't have a skill like this installed, skip this section entirely — the correctness pass and any complexity-review skill are sufficient on their own.
@@ -198,10 +221,10 @@ If you don't have a skill like this installed, skip this section entirely — th
 
 **This is about the harness's own operating environment, not project work** — it governs what happens when `pi` itself updates and silently breaks a hand-maintained core patch (tracked in `patches/core-patches.mjs`; see `patches/README.md`). pi's own packaging has changed at least once before badly enough to require a rebuild of the patch mechanism itself (moving the CLI's real entry point to a pre-built, minified bundle instead of the modular files patches used to target) — patches are content-anchored operations rather than file-path-keyed diffs specifically so they keep working regardless of how pi's build shape shifts.
 
-### What Albus MUST do, when a pi version bump is noticed (a changelog prompt, a version mismatch, or the human saying "pi got updated"):
+### What Lead MUST do, when a pi version bump is noticed (a changelog prompt, a version mismatch, or the human saying "pi got updated"):
 1. Run `~/.pi/agent/patches/self-heal.sh check`
 2. If it reports **healthy**, run `~/.pi/agent/patches/reapply.sh` as usual and move on — no further gate needed, this is the same low-risk reapply that already happens routinely
-3. If it reports **needs attention**, delegate to Harry to diagnose and fix the break — find the new surrounding text for whatever operation's anchor no longer matches (using the sandbox path the script printed: `.self-heal-work/<version>/pristine/` and `candidate/`), and edit that operation's `anchor`/`replacement` directly in `core-patches.mjs`. Never edit the live install directly.
+3. If it reports **needs attention**, delegate to Developer to diagnose and fix the break — find the new surrounding text for whatever operation's anchor no longer matches (using the sandbox path the script printed: `.self-heal-work/<version>/pristine/` and `candidate/`), and edit that operation's `anchor`/`replacement` directly in `core-patches.mjs`. Never edit the live install directly.
 4. Re-run `self-heal.sh check` to confirm the edited `core-patches.mjs` now applies clean against a fresh pristine copy
 5. **Surface the `core-patches.mjs` diff to the human as a grilling session before running `reapply.sh`** — what broke, what the edited operation changes, and explicit confirmation before it's applied to the live install
 
@@ -212,11 +235,11 @@ If you don't have a skill like this installed, skip this section entirely — th
 ## Core workflow rules
 
 ### 0. Delegate early and keep the lead responsive
-For lifecycle-based work, Albus should orchestrate rather than personally perform every long-running step.
+For lifecycle-based work, Lead should orchestrate rather than personally perform every long-running step.
 
-This is the default subagent policy. If the human explicitly names a role (for example, "send it to Harry"), delegate to that role rather than inferring lifecycle routing; approval gates and that role's resolved model-profile rules still apply.
+This is the default subagent policy. If the human explicitly names a role (for example, "send it to Developer"), delegate to that role rather than inferring lifecycle routing; approval gates and that role's resolved model-profile rules still apply.
 
-The human is the source of approval and review decisions. Albus orchestrates the loop around that human review.
+The human is the source of approval and review decisions. Lead orchestrates the loop around that human review.
 
 Expected pattern:
 - assign planning, implementation, and checking work to the right subagent
@@ -225,7 +248,7 @@ Expected pattern:
 - use asynchronous/background delegated runs when the tooling allows it
 - do not block simple user interaction while a delegated subagent is still running
 - give short status updates while work is in flight
-- for direct operational commands like "call Snape", "run Harry", or "fetch the result", acknowledge and execute immediately
+- for direct operational commands like "call Tester", "run Developer", or "fetch the result", acknowledge and execute immediately
 - do not do invisible setup before those direct commands unless the tool absolutely requires it
 - if preflight is required, say so first in one short line
 - before tool work, emit a compact status update in this form:
@@ -235,81 +258,81 @@ Expected pattern:
 - collect, verify, and synthesise subagent output when it completes
 - when a background subagent returns, pause the current thread of work and handle the result first before resuming anything else
 - treat completed handoffs as the highest operational priority in the session unless the human explicitly overrides that priority
-- do not use Snape to silently review Hermione's planning output unless the human explicitly asks for that extra review
+- do not use Tester to silently review Planner's planning output unless the human explicitly asks for that extra review
 - only take over delegated work directly if delegation fails, the tooling cannot support it, or the human explicitly asks for direct execution
 
 ### Commit message hygiene
-- When the human explicitly asks Harry to create a commit, use a plain one-line subject only.
+- When the human explicitly asks Developer to create a commit, use a plain one-line subject only.
 - Do **not** add `Co-authored-by` trailers, body bullets, or other autogenerated metadata unless the human explicitly requests them.
 - If a generated commit includes extra trailers or body text, rewrite it before any push.
 
 Default role split:
 - **Human**: reviews planning output, gives approval, gives feedback, and decides when to move to implementation, checking, or review
-- **Albus (lead)**: understands the ask, chooses the subagent, delegates, monitors, synthesises, communicates with the human, runs the final PR review
-- **Hermione (planner)**: runs the intake checklist, creates or updates the plan, writes it to `data/approach.db`, offers to log Plan of Action to the external sink on approval
-- **Harry (implementer)**: executes the approved plan end to end, writes execution records to `data/implementation.db`, offers to log Implementation Notes to the external sink on approval
-- **Snape (checker)**: validates implementation, writes findings to `data/feedback.db`, offers to log Observations to the external sink on approval
+- **Lead (lead)**: understands the ask, chooses the subagent, delegates, monitors, synthesises, communicates with the human, runs the final PR review
+- **Planner**: runs the intake checklist, creates or updates the plan, writes it to `data/approach.db`, offers to log Plan of Action to the external sink on approval
+- **Developer**: executes the approved plan end to end, writes execution records to `data/implementation.db`, offers to log Implementation Notes to the external sink on approval
+- **Tester**: validates implementation, writes findings to `data/feedback.db`, offers to log Observations to the external sink on approval
 
 Session configuration rule:
 - when a session starts, the harness resolves a per-role agent profile across three layers: **session** (current session only), **project** (`data/agent-session-profile.json`), and **global** (user-level profile shared across projects)
 - precedence is **session > project > global** — a more specific layer overrides a less specific one, field by field
-- the session profile may set per-role **runner**, **model**, and **thinking** values for hermione, harry, and snape
-- on session start, the harness silently adopts the resolved profile (no prompt) unless no value exists at any layer for the role in question, in which case Albus asks per the Model-selection rule below
+- the session profile may set per-role **runner**, **model**, and **thinking** values for planner, developer, and tester
+- on session start, the harness silently adopts the resolved profile (no prompt) unless no value exists at any layer for the role in question, in which case Lead asks per the Model-selection rule below
 - saving a profile value during a session writes through to the **global** profile, so it persists for future sessions/projects unless a project-level override exists
 - this profile is operational session state, not a replacement for the role contracts in this file
 
 Default subagent routing:
-- **Planning / discovery / repo research** → Hermione (direct auto-handoff)
-- **Planning output review** → human + Albus review, via Grilling Discipline
-- **Implementation execution** → Harry (direct auto-handoff)
-- **Implementation validation / drift detection** → Snape (direct auto-handoff)
-- **Final PR review** → Albus, after the Harry/Snape cycle goes green
+- **Planning / discovery / repo research** → Planner (direct auto-handoff)
+- **Planning output review** → human + Lead review, via Grilling Discipline
+- **Implementation execution** → Developer (direct auto-handoff)
+- **Implementation validation / drift detection** → Tester (direct auto-handoff)
+- **Final PR review** → Lead, after the Developer/Tester cycle goes green
 
-Model-selection rule for implementation (Harry-specific, since he's the one role without a pinned default — the underlying Self-Resolution Rule this bullet applies is not Harry-specific and covers Hermione/Snape too):
-- Harry is not pinned to one model by default
-- the preferred source of truth is the resolved agent profile (session > project > global) when a value exists for Harry at any of those layers
-- if Harry reports his own execution path as unresolved, that is not authoritative — Albus must check the resolved profile itself (per the Self-Resolution Rule) before relaying anything to the human; if the profile already resolves it, restart Harry with that value and just tell the human what was auto-resolved
-- if no profile value exists for Harry at any layer, Albus should explicitly ask the human which execution path to use:
+Model-selection rule for implementation (Developer-specific, since it's the one role without a pinned default — the underlying Self-Resolution Rule this bullet applies is not Developer-specific and covers Planner/Tester too):
+- Developer is not pinned to one model by default
+- the preferred source of truth is the resolved agent profile (session > project > global) when a value exists for Developer at any of those layers
+- if Developer reports its own execution path as unresolved, that is not authoritative — Lead must check the resolved profile itself (per the Self-Resolution Rule) before relaying anything to the human; if the profile already resolves it, restart Developer with that value and just tell the human what was auto-resolved
+- if no profile value exists for Developer at any layer, Lead should explicitly ask the human which execution path to use:
   - **Claude CLI**
   - **default model path: a mid-strength model with medium thinking**
 - if the human does not specify and no profile value exists at any layer, pause and ask rather than choosing silently
 - once the human specifies a path, save it to the profile so later sessions adopt it silently instead of asking again
 
 Preferred lifecycle loop:
-1. human and Albus align on the request
-2. Albus delegates planning to Hermione
-3. Hermione runs the intake checklist (external tracker / GitHub / local directories / other sources), then writes or updates `data/approach.db`
-4. Hermione auto-handoff arrives — Albus surfaces the POA to the human as a grilling session
-5. after a successful update to `data/approach.db`, Albus creates or refreshes a human-readable Markdown plan file under `docs/`
-6. if the human has feedback, Albus routes it back to Hermione; repeat until the human gives a green flag
-7. once approved, Hermione offers to log **Plan of Action** to the external sink (External Sink Content Rules preview first, if one is configured)
-8. Albus delegates implementation to Harry
-9. Harry auto-handoff arrives — Albus surfaces the result to the human as a grilling session
-10. once approved, Harry writes to `data/implementation.db` and offers to log **Implementation Notes** to the external sink
-11. the human may review implementation directly, or Albus may invoke Snape
-12. Snape validates implementation and writes findings to `data/feedback.db`
-13. Snape auto-handoff arrives — Albus surfaces findings to the human as a grilling session
-14. once approved, Snape offers to log **Observations** to the external sink
-15. if Snape's feedback requires changes, Albus routes Harry to work from `data/feedback.db`; repeat the Harry + Snape loop until the implementation goes green
-16. Albus runs the final PR review (correctness pass + any complexity/scoring skills installed), writes findings to `data/review.db`
-17. Albus surfaces the PR review to the human as a grilling session; once approved, offers to log **PR Review** to the external sink
-18. Albus synthesises the outcome and confirms every stage left a DB record and, where approved, a matching external-sink section
+1. human and Lead align on the request
+2. Lead delegates planning to Planner
+3. Planner runs the intake checklist (external tracker / GitHub / local directories / other sources), then writes or updates `data/approach.db`
+4. Planner auto-handoff arrives — Lead surfaces the POA to the human as a grilling session
+5. after a successful update to `data/approach.db`, Lead creates or refreshes a human-readable Markdown plan file under `docs/`
+6. if the human has feedback, Lead routes it back to Planner; repeat until the human gives a green flag
+7. once approved, Planner offers to log **Plan of Action** to the external sink (External Sink Content Rules preview first, if one is configured)
+8. Lead delegates implementation to Developer
+9. Developer auto-handoff arrives — Lead surfaces the result to the human as a grilling session
+10. once approved, Developer writes to `data/implementation.db` and offers to log **Implementation Notes** to the external sink
+11. the human may review implementation directly, or Lead may invoke Tester
+12. Tester validates implementation and writes findings to `data/feedback.db`
+13. Tester auto-handoff arrives — Lead surfaces findings to the human as a grilling session
+14. once approved, Tester offers to log **Observations** to the external sink
+15. if Tester's feedback requires changes, Lead routes Developer to work from `data/feedback.db`; repeat the Developer + Tester loop until the implementation goes green
+16. Lead runs the final PR review (correctness pass + any complexity/scoring skills installed), writes findings to `data/review.db`
+17. Lead surfaces the PR review to the human as a grilling session; once approved, offers to log **PR Review** to the external sink
+18. Lead synthesises the outcome and confirms every stage left a DB record and, where approved, a matching external-sink section
 
 Operational rule:
-- when the task is planning-heavy and can be delegated, delegate directly to Hermione
-- when the task is implementation-heavy, delegate directly to Harry
-- when the task is implementation validation, delegate directly to Snape
-- for implementation delegation, explicitly confirm Harry's model path with the human before execution
+- when the task is planning-heavy and can be delegated, delegate directly to Planner
+- when the task is implementation-heavy, delegate directly to Developer
+- when the task is implementation validation, delegate directly to Tester
+- for implementation delegation, explicitly confirm Developer's model path with the human before execution
 - if a subagent flow is available, do not fall back to manual polling or synchronous blocking unless necessary
-- if a background handoff arrives while Albus is doing something else, Albus must stop, surface that result, resolve any immediate follow-up or documentation from it, and only then resume the prior thread
+- if a background handoff arrives while Lead is doing something else, Lead must stop, surface that result, resolve any immediate follow-up or documentation from it, and only then resume the prior thread
 
 ### 1. Plan first
 Before making changes, create or update a structured **Approach** record.
 
 Default ownership:
-- **Hermione** is responsible for writing the plan into `data/approach.db`
-- **Albus** is responsible for turning the latest approved Hermione output into a readable Markdown artifact in `docs/`
-- Albus should not manually replace Hermione's DB step when a planner subagent flow is available, except as a fallback
+- **Planner** is responsible for writing the plan into `data/approach.db`
+- **Lead** is responsible for turning the latest approved Planner output into a readable Markdown artifact in `docs/`
+- Lead should not manually replace Planner's DB step when a planner subagent flow is available, except as a fallback
 
 The plan should capture:
 - story reference
@@ -323,7 +346,7 @@ The plan should capture:
 - story class
 
 ### 2. Freeze the plan for the cycle
-Once execution starts, Harry and Snape work against the same frozen plan for that cycle.
+Once execution starts, Developer and Tester work against the same frozen plan for that cycle.
 Do not silently mutate the plan mid-cycle.
 If scope changes materially, create a new plan revision or new cycle entry.
 
@@ -331,7 +354,7 @@ If scope changes materially, create a new plan revision or new cycle entry.
 Implementation work must leave a structured local artifact and must not live only in chat history.
 
 Default ownership:
-- Harry writes execution records to `data/implementation.db`
+- Developer writes execution records to `data/implementation.db`
 
 Capture at least:
 - artifact created or modified
@@ -341,24 +364,24 @@ Capture at least:
 - commands or tool calls when they are needed to explain the result
 
 ### 4. Check independently
-Snape should verify:
+Tester should verify:
 - drift from the Approach plan
 - defects
 - missing coverage
 - weak assumptions
 - mismatch between expected and actual behavior
 
-Snape is checking Harry's in-progress work against the plan, not a submitted GitHub PR — a full PR-review pipeline (classifier, axis sub-agents, GitHub publish) doesn't fit that context and Snape should not invoke one even if it's installed. If a PR-scoring skill's rubric/ordinal-band language is available, he may borrow it for structuring findings — see `agents/snape.md` — but that's optional, not a hard dependency.
+Tester is checking Developer's in-progress work against the plan, not a submitted GitHub PR — a full PR-review pipeline (classifier, axis sub-agents, GitHub publish) doesn't fit that context and Tester should not invoke one even if it's installed. If a PR-scoring skill's rubric/ordinal-band language is available, Tester may borrow it for structuring findings — see `agents/tester.md` — but that's optional, not a hard dependency.
 
 Default ownership:
-- **Snape** is responsible for writing structured findings into `data/feedback.db`
-- feedback capture should happen as part of the checking flow, not as an afterthought by Albus
-- **Harry** should treat `data/feedback.db` as the next input when Snape's findings require another implementation pass
+- **Tester** is responsible for writing structured findings into `data/feedback.db`
+- feedback capture should happen as part of the checking flow, not as an afterthought by Lead
+- **Developer** should treat `data/feedback.db` as the next input when Tester's findings require another implementation pass
 
 Log findings into **Feedback** in structured form.
 
 ### 5. Review the outcome
-Once Harry and Snape's cycle goes green, Albus reviews the final diff (correctness pass + any installed complexity-review skill) and writes findings to `data/review.db`. See PR Review Rule.
+Once Developer and Tester's cycle goes green, Lead reviews the final diff (correctness pass + any installed complexity-review skill) and writes findings to `data/review.db`. See PR Review Rule.
 
 ### 6. Promote useful findings
 Recurring or high-value findings should become:
@@ -388,13 +411,13 @@ Every Feedback record in `data/feedback.db` must include:
 - Severity classification (blocker, defect, gap, or informational)
 
 For the current harness phase, treat these ownership rules as explicit:
-- **Hermione** writes or updates the Approach record in `data/approach.db`
-- **Albus** creates or refreshes the corresponding human-readable plan artifact in `docs/` after Hermione completes
-- **Harry** writes execution records to `data/implementation.db`
-- **Snape** writes or updates Feedback records in `data/feedback.db`
-- **Albus** writes Review records to `data/review.db` after the final PR review
+- **Planner** writes or updates the Approach record in `data/approach.db`
+- **Lead** creates or refreshes the corresponding human-readable plan artifact in `docs/` after Planner completes
+- **Developer** writes execution records to `data/implementation.db`
+- **Tester** writes or updates Feedback records in `data/feedback.db`
+- **Lead** writes Review records to `data/review.db` after the final PR review
 - the active session may also persist per-role runtime configuration across three layers — session, project (`data/agent-session-profile.json`), and global (user-level, shared across projects) — resolved with session > project > global precedence
-- if only planning is happening, the Hermione-owned Approach record is still required even if no implementation has started
+- if only planning is happening, the Planner-owned Approach record is still required even if no implementation has started
 - if implementation/checking happens, Feedback capture is required before the cycle is considered complete
 
 Adopt incrementally: `data/approach.db` and `data/feedback.db` first, then `data/implementation.db` and `data/review.db` once the basic loop is working. `learning.db` remains optional until that part of the harness is adopted.
@@ -403,9 +426,9 @@ Adopt incrementally: `data/approach.db` and `data/feedback.db` first, then `data
 
 Keep a human in the loop for:
 - approving the plan when scope is ambiguous or high impact
-- approving Harry's output before it's logged as Implementation Notes
-- approving Snape's findings before they're logged as Observations
-- approving Albus's PR review before it's logged and considered done
+- approving Developer's output before it's logged as Implementation Notes
+- approving Tester's findings before they're logged as Observations
+- approving Lead's PR review before it's logged and considered done
 - approving eval promotion for canonical test cases
 - approving major workflow/schema changes
 - approving risky production changes
@@ -430,18 +453,18 @@ SQLite DBs should be:
 - append-friendly
 - queryable across cycles
 
-Prefer simple schemas over overly abstract ones.
+Prefer simple schemas over overly abstract ones. Writes go through `record_cycle` (see Structured Cycle Capture); direct `sqlite3` remains the normal way to read/inspect these DBs, just not to write to them.
 
 ## Notification rules (optional)
 
 If you want a phone/desktop notification on lifecycle milestones, [ntfy.sh](https://ntfy.sh) is a zero-setup option — pick your own topic name (topics are unauthenticated pub/sub, so don't reuse a guessable/shared one) and set it below.
 
 Lifecycle milestones worth notifying on:
-- Hermione run completed
-- Harry run completed
-- Snape run completed
-- Albus PR review completed
-- Albus direct task completed when it changed code, config, data, or deployment state
+- Planner run completed
+- Developer run completed
+- Tester run completed
+- Lead PR review completed
+- Lead direct task completed when it changed code, config, data, or deployment state
 - blocked or failed work that needs human input
 
 **Topic:** `<your-ntfy-topic>` (pick your own, configurable per project)
@@ -457,11 +480,11 @@ curl -s \
 ```
 
 **Priority mapping:**
-- Snape finds a release blocker → `urgent`, tag: `red_circle`
-- Snape finds issues to fix → `high`, tag: `warning`
-- Harry/Snape completes clean → `default`, tag: `white_check_mark`
-- Hermione completes → `default`, tag: `memo`
-- Albus's PR review completes → `default`, tag: `white_check_mark` (or `warning`/`red_circle` if it found blockers)
+- Tester finds a release blocker → `urgent`, tag: `red_circle`
+- Tester finds issues to fix → `high`, tag: `warning`
+- Developer/Tester completes clean → `default`, tag: `white_check_mark`
+- Planner completes → `default`, tag: `memo`
+- Lead's PR review completes → `default`, tag: `white_check_mark` (or `warning`/`red_circle` if it found blockers)
 - Blocked or failed run → `high`, tag: `x`
 
 **Operational rule (if notifications are configured):**
@@ -475,15 +498,15 @@ If you haven't set up a notification endpoint, skip this section — nothing els
 ## Recommended v1 harness behavior
 
 For a new project, the harness should do this:
-1. Hermione runs the intake checklist and ingests story context from wherever the human points it (external tracker, GitHub, local docs)
+1. Planner runs the intake checklist and ingests story context from wherever the human points it (external tracker, GitHub, local docs)
 2. resolve and silently adopt the session agent profile (session > project > global) when the session starts
-3. Hermione creates an Approach record in `data/approach.db`
-4. human approves the plan via a grilling session; Hermione offers to log Plan of Action to the external sink
-5. Harry executes implementation/testing work
-6. human approves Harry's output; Harry writes to `data/implementation.db` and offers to log Implementation Notes to the external sink
-7. Snape creates Feedback records in `data/feedback.db`
-8. human approves Snape's findings; Snape offers to log Observations to the external sink
-9. Albus runs the final PR review, writes to `data/review.db`, and offers to log PR Review to the external sink once approved
+3. Planner creates an Approach record in `data/approach.db`
+4. human approves the plan via a grilling session; Planner offers to log Plan of Action to the external sink
+5. Developer executes implementation/testing work
+6. human approves Developer's output; Developer writes to `data/implementation.db` and offers to log Implementation Notes to the external sink
+7. Tester creates Feedback records in `data/feedback.db`
+8. human approves Tester's findings; Tester offers to log Observations to the external sink
+9. Lead runs the final PR review, writes to `data/review.db`, and offers to log PR Review to the external sink once approved
 
 ## File roles
 

@@ -14,10 +14,44 @@ import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 const CLAUDE_DEFAULT_MODEL = "claude-sonnet-4-6";
 const RUNS_DIR = path.join("data", "subagent-runs");
 
-type RunStatus = "running" | "completed" | "failed" | "canceled";
+type RunStatus = "running" | "completed" | "incomplete" | "failed" | "canceled";
 type RunMode = "single";
 
-const TERMINAL_RUN_STATUSES = new Set<RunStatus>(["completed", "failed", "canceled"]);
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>(["completed", "incomplete", "failed", "canceled"]);
+
+// planner/developer/tester are expected to log their stage via the
+// record_cycle tool (see extensions/cycle-records.ts) when they actually do
+// lifecycle work. A clean exit with no such call doesn't necessarily mean
+// something went wrong — some tasks legitimately don't touch the DB — but it
+// means the lead shouldn't treat the run as a verified completion without
+// checking. Status is a computed fact about what happened, not something the
+// model self-reports.
+const LIFECYCLE_STAGE_BY_ROLE: Record<string, string> = {
+	planner: "approach",
+	developer: "implementation",
+	tester: "feedback",
+};
+
+// Deliberately narrow (denylist, not allowlist): a full deny-by-default env
+// scope risks silently breaking pi's/claude's own auth or config resolution
+// without live-testing every provider path this harness uses. Add prefixes
+// here for any third-party service credentials that end up in your own
+// mcp.json/env but have no business reaching a coding subagent (an accounting
+// API, an internal ticketing system, etc.) — this list ships empty since
+// there's nothing generic to deny by default. A real allowlist is future
+// work once each runner's actual required env-var set is enumerated and
+// tested.
+const ENV_DENYLIST_PREFIXES: string[] = [];
+
+function scopedEnv(): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	for (const key of Object.keys(env)) {
+		if (ENV_DENYLIST_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+			delete env[key];
+		}
+	}
+	return env;
+}
 const COLLECTOR_RUN_ID_PATTERN = /\brun_[a-z0-9]+\b/gi;
 const COLLECTOR_AGENT_NAME = "collector";
 const RUN_STATUS_POLL_MS = 1000;
@@ -49,6 +83,7 @@ interface SingleResult {
 interface RunRecord {
   runId: string;
   status: RunStatus;
+  statusReason?: string;
   mode: RunMode;
   background: boolean;
   autoHandoff: boolean;
@@ -141,6 +176,22 @@ function getFinalOutput(messages: Message[]): string {
 
 function isTerminalRunStatus(status?: RunStatus | null): status is Exclude<RunStatus, "running"> {
   return status ? TERMINAL_RUN_STATUSES.has(status) : false;
+}
+
+function hasSuccessfulCycleRecord(messages: Message[]): boolean {
+  return messages.some((msg: any) => msg?.role === "toolResult" && msg?.toolName === "record_cycle" && !msg?.isError);
+}
+
+function deriveCompletionStatus(agentName: string, gated: boolean, messages: Message[]): { status: RunStatus; reason?: string } {
+  if (!gated) return { status: "failed" };
+  const stage = LIFECYCLE_STAGE_BY_ROLE[agentName];
+  if (stage && !hasSuccessfulCycleRecord(messages)) {
+    return {
+      status: "incomplete",
+      reason: `Exited clean but no successful record_cycle call (stage: ${stage}) was observed — the ${stage} DB record for this run may be missing. Not necessarily an error: some tasks legitimately don't produce one, but check before treating this run as a verified completion.`,
+    };
+  }
+  return { status: "completed" };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -302,6 +353,7 @@ async function spawnPiAgent(
     cwd,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
+    env: scopedEnv(),
   });
 
   record.pid = child.pid;
@@ -393,7 +445,9 @@ async function spawnPiAgent(
         if (record.status !== "canceled") {
           if (result.exitCode === 0) {
             const gated = await waitForCollectorDependencyIfNeeded(record, result);
-            record.status = gated ? "completed" : "failed";
+            const derived = deriveCompletionStatus(result.agent, gated, result.messages);
+            record.status = derived.status;
+            record.statusReason = derived.reason;
           } else {
             record.status = "failed";
           }
@@ -432,7 +486,7 @@ async function spawnClaudeAgent(
   const child = spawn(
     "claude",
     ["-p", "--model", model, "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"],
-    { cwd, shell: false, stdio: ["pipe", "pipe", "pipe"] },
+    { cwd, shell: false, stdio: ["pipe", "pipe", "pipe"], env: scopedEnv() },
   );
 
   record.pid = child.pid;
@@ -583,7 +637,9 @@ async function spawnClaudeAgent(
       if (record.status !== "canceled") {
         if (result.exitCode === 0 && !sawError) {
           const gated = await waitForCollectorDependencyIfNeeded(record, result);
-          record.status = gated ? "completed" : "failed";
+          const derived = deriveCompletionStatus(result.agent, gated, result.messages);
+          record.status = derived.status;
+          record.statusReason = derived.reason;
         } else {
           record.status = "failed";
         }
@@ -637,7 +693,7 @@ async function startRun(
         if (latest.background && latest.autoHandoff) {
           const latestResult = latest.results[0];
           const output = latestResult ? getFinalOutput(latestResult.messages) : "";
-          const notices = [latestResult?.errorMessage, latestResult?.stderr?.trim() ? latestResult.stderr.trim() : ""]
+          const notices = [latestResult?.errorMessage, latest.statusReason, latestResult?.stderr?.trim() ? latestResult.stderr.trim() : ""]
             .filter(Boolean)
             .join("\n\n");
           const body = output
@@ -648,7 +704,7 @@ async function startRun(
               customType: "subagent-handoff",
               content: `Background ${latestResult?.agent || "subagent"} run ${latest.runId} completed with status ${latest.status}. ${body}`,
               display: true,
-              details: { runId: latest.runId, status: latest.status, artifactPath: latest.artifactPath },
+              details: { runId: latest.runId, status: latest.status, statusReason: latest.statusReason, artifactPath: latest.artifactPath },
             },
             { deliverAs: "followUp", triggerTurn: true },
           );
@@ -665,7 +721,7 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
-    description: "Run hermione/harry/snape subagents with durable background lifecycle actions. Pass previousRunId on action=run to automatically carry a prior terminal run's final output into this run's task instead of relying on the lead to relay it manually.",
+    description: "Run planner/developer/tester subagents with durable background lifecycle actions. Pass previousRunId on action=run to automatically carry a prior terminal run's final output into this run's task instead of relying on the lead to relay it manually.",
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {

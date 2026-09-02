@@ -20,7 +20,7 @@ import {
   type ThinkingLevel,
 } from "./profile.ts";
 
-const ROLE_ORDER = ["hermione", "harry", "snape"] as const;
+const ROLE_ORDER = ["planner", "developer", "tester"] as const;
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const CLAUDE_PRESET_MODELS = [
   "claude-sonnet-5",
@@ -221,12 +221,12 @@ async function configureRole(
   const currentModel = current.model || (currentRunner === "claude-cli" ? CLAUDE_DEFAULT_MODEL : "default");
   const currentThinking = current.thinking;
 
-  const recommendedPiModel = role === "snape"
+  const recommendedPiModel = role === "tester"
     ? "openai-codex/gpt-5.6-luna"
-    : role === "harry"
+    : role === "developer"
       ? "openai-codex/gpt-5.6-luna"
       : defaults.model;
-  const recommendedThinking = role === "snape" ? "high" : role === "harry" ? "medium" : defaults.thinking;
+  const recommendedThinking = role === "tester" ? "high" : role === "developer" ? "medium" : defaults.thinking;
 
   // Only offer "Keep current" when this role already has a real override saved —
   // it's the safe no-op choice so walking through every role in one pass can't
@@ -329,7 +329,7 @@ async function handleProfileSetup(pi: ExtensionAPI, ctx: ExtensionContext, force
 
     const shouldConfigure = await ctx.ui.confirm(
       "Agent session profile",
-      "Configure hermione / harry / snape for this session?",
+      "Configure planner / developer / tester for this session?",
     );
     if (!shouldConfigure) {
       setProfileWidget(pi, null);
@@ -404,7 +404,7 @@ export default function agentSessionProfileExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("agent-profile", {
-    description: "Configure per-role session models/runners for hermione, harry, and snape",
+    description: "Configure per-role session models/runners for planner, developer, and tester",
     handler: async (args, ctx) => {
       const sessionId = ctx.sessionManager.getSessionId();
       const trimmed = args.trim().toLowerCase();

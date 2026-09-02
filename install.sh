@@ -15,7 +15,7 @@ mkdir -p "$AGENT_DIR"/{extensions,agents,patches}
 echo "Installing extensions..."
 cp -R "$REPO_DIR"/extensions/. "$AGENT_DIR/extensions/"
 
-echo "Installing agent role prompts (hermione/harry/snape)..."
+echo "Installing agent role prompts (planner/developer/tester)..."
 cp -R "$REPO_DIR"/agents/. "$AGENT_DIR/agents/"
 
 echo "Installing core patch pack..."

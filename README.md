@@ -1,11 +1,13 @@
 # pi-harness
 
 A role-based subagent harness for [pi](https://github.com/earendil-works/pi-coding-agent):
-a lead agent (**Albus**) that delegates planning, implementation, and checking
-to three fixed subagent roles (**Hermione**, **Harry**, **Snape**), with
-structured SQLite capture at every stage, a human-in-the-loop review pattern
-("Grilling Discipline") instead of single yes/no gates, and an optional,
-gated write-back to whatever external tracker you use.
+a **Lead** agent that orchestrates planning, implementation, and checking
+across three subagent roles (**Planner**, **Developer**, **Tester**) and
+performs the final review itself, with structured SQLite capture at every
+stage (written through a tool call, not freehand SQL — see below), a
+human-in-the-loop review pattern ("Grilling Discipline") instead of single
+yes/no gates, and an optional, gated write-back to whatever external tracker
+you use.
 
 This isn't a pi fork or plugin — it's an `AGENTS.md` operating contract plus a
 handful of pi extensions and agent-role prompt files that you install into
@@ -17,19 +19,28 @@ your own `~/.pi/agent/` directory.
   plan → implement → check → review lifecycle, SQLite capture layout, and the
   human approval gates ("Grilling Discipline": one question at a time, a
   recommended default attached to each, no bundling).
-- **`agents/`** — the three subagent role prompts (Hermione/Harry/Snape),
+- **`agents/`** — the three subagent role prompts (Planner/Developer/Tester),
   loaded by pi's `subagent` tool.
 - **`extensions/`**
   - `lifecycle-subagent/` — registers the `subagent` tool: runs a role
     (in the background by default) either as another pi process or, via
     `runner: "claude-cli"`, as a `claude -p` invocation — useful for bridging
     to Claude-Code-native skills that pi's own subagent tool can't spawn.
+    Reports a run's outcome as `completed`, `incomplete`, or `failed` (see
+    `cycle-records.ts` below for what `incomplete` means), and scopes each
+    child process's environment instead of inheriting it wholesale.
+  - `cycle-records.ts` — registers the `record_cycle` tool: the actual,
+    machine-verified way Planner/Developer/Tester write their DB records,
+    replacing freehand `sqlite3` calls the model used to construct itself.
+    `lifecycle-subagent` checks whether this tool was actually called before
+    reporting a run `completed` — a subagent's own closing message is never
+    trusted as proof the DB record exists.
   - `subagent-status.ts` — a live status ticker (2–3 lines, fixed height)
     shown above the editor while a background subagent runs, so the lead
     session isn't a black box while something else works.
   - `agent-session-profile/` — lets you pin a runner/model/thinking-level
     per role, resolved across session → project → global scope, so you
-    aren't re-answering "which model for Harry?" every session.
+    aren't re-answering "which model for Developer?" every session.
   - `external-sink-gate.ts` — a generic version of "never write to an
     external system without a human seeing the literal payload first."
     Nothing is gated until you configure it — see `config/external-sink.example.json`.
@@ -50,6 +61,23 @@ your own `~/.pi/agent/` directory.
   OpenAI-compatible reasoning model (e.g. a vLLM-served Qwen3 deployment)
   into pi, including a real gotcha around where the "enable thinking" flag
   actually needs to live in the request body.
+
+## Why the structured DB writes and the third run status
+
+If you're running smaller/self-hosted models alongside stronger hosted ones,
+prose-only procedural instructions ("write your record to the DB when
+you're done") are a real drift surface — a weaker model can exit cleanly
+while claiming success without the write ever happening correctly, and
+nothing catches it. Two things here exist specifically to close that gap:
+
+- **`record_cycle`** makes the DB write itself the source of truth, not the
+  model's account of the write. A subagent's closing chat message and its
+  actual recorded output are allowed to disagree; only the latter matters.
+- **The `incomplete` status** is what `lifecycle-subagent` reports when a
+  run exits clean but never made a successful `record_cycle` call — an
+  honest "this may not have actually happened" signal instead of a silent
+  false `completed`. It isn't automatically a failure (some tasks legitimately
+  don't touch the DB) — it's a prompt for Lead to check before trusting the run.
 
 ## Install
 
@@ -77,17 +105,19 @@ just a copy — read `install.sh`, it's short.
 ### Optional: gating writes to an external tracker
 
 If your team keeps project context in Notion (or Linear, Confluence, etc.)
-and wants Hermione/Harry/Snape/Albus to be able to write status updates back
-there — but only after a human has seen the literal draft — copy
+and wants Planner/Developer/Tester/Lead to be able to write status updates
+back there — but only after a human has seen the literal draft — copy
 `config/external-sink.example.json` to `~/.pi/agent/external-sink.json` and
 edit it to list the write-tool names for whatever MCP server you're using.
 Nothing is gated until this file exists.
 
-## Why the names
+### Optional: scoping subagent environments
 
-The lead/subagent roles are named Albus, Hermione, Harry, and Snape — lead,
-planner, implementer, checker. It's just a mnemonic for who does what; there's
-no other theming in this repo.
+`ENV_DENYLIST_PREFIXES` in `extensions/lifecycle-subagent/index.ts` ships
+empty. If you have third-party service credentials sitting in your own
+`mcp.json`/environment that a coding subagent has no reason to see, add
+their env-var prefixes there so background Planner/Developer/Tester
+processes don't inherit them.
 
 ## Credits
 

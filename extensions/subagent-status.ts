@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 
-// Live peek into a running background subagent (Hermione/Harry/Snape) while
+// Live peek into a running background subagent (Planner/Developer/Tester) while
 // the lead is otherwise idle waiting on it — a plain status ticker, not a
 // scrollback log: a short label plus the last few things that happened.
 

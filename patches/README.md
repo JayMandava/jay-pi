@@ -96,6 +96,6 @@ Fixing a broken operation:
 run unattended for anything that already applies clean — `check` never
 writes to the live install regardless of outcome. Fixing a broken operation
 needs judgment (reading the pristine sandbox, finding where an upstream
-refactor moved the old anchor point) — that's implementer (Harry) work, not
+refactor moved the old anchor point) — that's Developer work, not
 the script's, and the `core-patches.mjs` edit should be reviewed by a human
 before `reapply.sh` runs. See the Core Patch Self-Heal Rule in `AGENTS.md`.
