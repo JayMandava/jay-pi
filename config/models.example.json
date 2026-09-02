@@ -1,0 +1,40 @@
+{
+  "providers": {
+    "self-hosted-qwen": {
+      "baseUrl": "http://YOUR_HOST:PORT/v1",
+      "api": "openai-completions",
+      "apiKey": "dummy-key",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "requiresToolResultName": true,
+        "thinkingFormat": "qwen-chat-template"
+      },
+      "models": [
+        {
+          "id": "your-served-model-id",
+          "name": "Self-hosted Qwen (reasoning)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "thinkingLevelMap": {
+            "off": "off",
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "on",
+            "xhigh": "on"
+          }
+        }
+      ]
+    }
+  }
+}

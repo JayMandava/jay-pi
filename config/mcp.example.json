@@ -1,0 +1,23 @@
+{
+  "settings": {
+    "autoAuth": true
+  },
+  "mcpServers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "auth": "oauth",
+      "lifecycle": "lazy"
+    },
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "auth": "bearer",
+      "bearerTokenEnv": "GITHUB_PAT",
+      "lifecycle": "lazy"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp", "--browser", "chromium"],
+      "lifecycle": "lazy"
+    }
+  }
+}

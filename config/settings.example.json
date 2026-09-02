@@ -1,0 +1,24 @@
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-5",
+  "defaultThinkingLevel": "medium",
+  "steeringMode": "one-at-a-time",
+  "followUpMode": "one-at-a-time",
+  "skills": [
+    "~/.claude/skills"
+  ],
+  "enableSkillCommands": true,
+  "packages": [
+    "npm:pi-mcp-adapter",
+    "git:github.com/DietrichGebert/ponytail"
+  ],
+  "terminal": {
+    "showTerminalProgress": true
+  },
+  "enabledModels": [
+    "anthropic/claude-sonnet-5",
+    "anthropic/claude-opus-5",
+    "anthropic/claude-haiku-4-5-20251001"
+  ],
+  "tuiMode": "regular"
+}
