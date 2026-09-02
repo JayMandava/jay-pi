@@ -8,7 +8,7 @@ import { Type } from "typebox";
 
 // Structured, tool-mediated writes for the plan/implement/check/review cycle
 // DBs, replacing freehand `sqlite3` calls the model used to construct itself.
-// Borrowed from a reviewer-runtime design pattern:
+// Two things this buys, adapted from a reviewer-runtime design pattern:
 //
 // 1. Payload vs narration: the DB row is written by this tool, not asserted
 //    by the model's closing prose. lifecycle-subagent scans a run's messages
@@ -67,7 +67,7 @@ export default function cycleRecords(pi: ExtensionAPI) {
 		name: "record_cycle",
 		label: "Record cycle",
 		description:
-			"Write a structured record to the lifecycle DB for the current stage (approach/implementation/feedback/review) instead of freehand sqlite3. This is the machine-verifiable record of what a role produced — the lead can distinguish a real completion from a run that merely exited cleanly by checking whether this tool was actually called.",
+			"Write a structured record to the lifecycle DB for the current stage (approach/implementation/feedback/review) instead of freehand sqlite3. This is the machine-verifiable record of what a role produced — the lead checks the message trace for an actual call to this tool, not your closing summary, to decide whether the stage was really recorded. Writing an equivalent row yourself via bash/sqlite3 does not count, and asserting in your final message that this tool was called when it was not is a critical failure, not a shortcut.",
 		parameters: RecordCycleParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

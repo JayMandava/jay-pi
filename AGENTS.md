@@ -68,6 +68,18 @@ Why: a subagent's closing chat message is not proof that a DB record was actuall
 
 **`incomplete` is not automatically a failure.** Some tasks legitimately don't touch the DB (a quick question, a status check). It's an honest signal, not a verdict — when Lead sees it in a handoff, check whether a DB write was actually expected for that task before treating it as a problem. Silently re-labeling every `incomplete` as `completed` (or as `failed`) defeats the point of having a third state.
 
+**Confirmed live in testing, not hypothetical:** Planner (running a mid-strength model) wrote its Approach row by hand via `bash`/`sqlite3` instead of calling `record_cycle`, then its own closing message claimed *"record_cycle stage approach recorded successfully"* — false. The `incomplete` status caught it correctly by checking the actual message trace rather than trusting that sentence. This is exactly why the tool result text always leads with the real computed status (`[status: ...]`) now, not just whatever prose the subagent returned — see `formatStatusLine` in `lifecycle-subagent/index.ts`.
+
+## Verifiable Actions Rule
+
+The lesson above generalizes past `record_cycle`. Anything with a real effect — a DB write, an external-sink write, a browser check via Playwright MCP, any MCP-backed action — should be a **tool call that shows up in the message trace**, not a claim in prose. A role's own summary of what it did is narration; only an actual tool call (or its absence) is fact.
+
+- **DB writes**: code-enforced via `record_cycle` + the `incomplete` status (above).
+- **External-sink writes**: code-enforced via `extensions/external-sink-gate.ts` — these are already MCP tool calls, and the gate gets a chance to intercept every one of them; a role cannot fake this one even by trying, since there's no non-tool-call path to actually write to Notion/Linear/etc.
+- **Browser/Playwright checks, or any other MCP tool**: not code-enforced today — there's no generic "did a claimed check actually happen" mechanism in this harness yet. If a role's summary claims it "verified in the browser" or "tested via MCP," and that claim matters, ask for the specific evidence (the actual tool call, a URL, a screenshot, literal output) rather than accepting the sentence at face value, the same way `record_cycle`'s check refuses to accept a subagent's own account of a DB write.
+
+This is a standing instruction for Lead's judgment where no code check exists yet, not a promise that every MCP call is automatically verified — extend the code-level check (mirroring `hasSuccessfulCycleRecord` in `lifecycle-subagent/index.ts`) if a specific claim-type keeps needing manual scrutiny.
+
 ## Subagent Process Isolation
 
 Every background Planner/Developer/Tester run is a separate top-level `pi` or `claude` child process (never a nested sub-agent facility inside another harness) — this is deliberate: independent top-level processes survive a dropped stream or a crashed turn without taking the rest of a fan-out down with them, where nested sub-agent facilities are more fragile to a single bad stream. Don't collapse this into an in-process "spawn a nested agent" call even if a future pi/Claude version makes that easier — the isolation is the point.

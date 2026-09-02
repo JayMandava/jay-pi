@@ -178,6 +178,16 @@ function isTerminalRunStatus(status?: RunStatus | null): status is Exclude<RunSt
   return status ? TERMINAL_RUN_STATUSES.has(status) : false;
 }
 
+// The computed status (and why, when it's not a clean completion) must be
+// impossible to miss in the text a caller actually reads — burying it only
+// in `details` while `content` shows the subagent's own prose let a false
+// "recorded successfully" narration go unnoticed in practice. Always lead
+// with the real, code-derived status; never let the model's own account be
+// the only thing visible.
+function formatStatusLine(status: RunStatus, reason?: string): string {
+  return `[status: ${status}]${reason ? ` ${reason}` : ""}`;
+}
+
 function hasSuccessfulCycleRecord(messages: Message[]): boolean {
   return messages.some((msg: any) => msg?.role === "toolResult" && msg?.toolName === "record_cycle" && !msg?.isError);
 }
@@ -772,7 +782,9 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
         return {
           content: [{ type: "text", text: action === "status"
             ? `${record.runId}: ${record.status}\nProfile: ${record.sessionProfileSource || "none"} | ${record.sessionProfilePath || "(unknown)"}`
-            : output || `Run ${record.runId} has no final output yet.` }],
+            : output
+              ? `${formatStatusLine(record.status, record.statusReason)}\n\n${output}`
+              : `${formatStatusLine(record.status, record.statusReason)} Run ${record.runId} has no final output yet.` }],
           details: {
             action,
             runId: record.runId,
@@ -961,7 +973,12 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
       const finalRecord = (await waitForRunTerminal(ctx.cwd, runId)) || loadRun(ctx.cwd, runId) || record;
       const finalOutput = finalRecord.results[0] ? getFinalOutput(finalRecord.results[0].messages) : "";
       return {
-        content: [{ type: "text", text: finalOutput || `Run ${runId} completed with status ${finalRecord.status}.` }],
+        content: [{
+          type: "text",
+          text: finalOutput
+            ? `${formatStatusLine(finalRecord.status, finalRecord.statusReason)}\n\n${finalOutput}`
+            : `${formatStatusLine(finalRecord.status, finalRecord.statusReason)} Run ${runId} has no output.`,
+        }],
         details: {
           action,
           runId,
