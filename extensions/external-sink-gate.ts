@@ -51,10 +51,13 @@ function loadGatedTools(): Map<string, string> {
 	return byTool;
 }
 
-function formatInput(input: Record<string, unknown>): string {
+// Truncating the preview and still letting the human approve it would mean
+// approving content they never actually saw in full — exactly what this gate
+// exists to prevent. So an oversized payload is blocked outright rather than
+// shown truncated; there is no partial-preview path.
+function formatInput(input: Record<string, unknown>): { text: string; tooLarge: boolean } {
 	const json = JSON.stringify(input, null, 2);
-	if (json.length <= MAX_PREVIEW_CHARS) return json;
-	return `${json.slice(0, MAX_PREVIEW_CHARS)}\n... (truncated, ${json.length} chars total)`;
+	return { text: json, tooLarge: json.length > MAX_PREVIEW_CHARS };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -78,7 +81,15 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		const approved = await ctx.ui.confirm(`Confirm ${label} write: ${event.toolName}`, formatInput(event.input));
+		const { text, tooLarge } = formatInput(event.input);
+		if (tooLarge) {
+			return {
+				block: true,
+				reason: `${label} write payload is too large to preview safely (over ${MAX_PREVIEW_CHARS} characters) — approving a truncated preview would mean approving content the human never actually saw, which defeats the point of this gate. Split the write into smaller sections, or have the human review the full content some other way first, then retry with a payload under the limit.`,
+			};
+		}
+
+		const approved = await ctx.ui.confirm(`Confirm ${label} write: ${event.toolName}`, text);
 		if (!approved) {
 			return { block: true, reason: `Human did not approve this ${label} write.` };
 		}

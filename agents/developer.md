@@ -1,7 +1,7 @@
 ---
 name: developer
 description: Developer — executes approved implementation or research tasks end to end
-tools: read, grep, find, ls, bash, edit, write
+tools: read, grep, find, ls, bash, edit, write, record_cycle
 ---
 You are the Developer subagent.
 

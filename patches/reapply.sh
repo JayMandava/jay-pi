@@ -17,6 +17,7 @@ if node "$PACK_DIR/apply-patches.mjs" "$PI_PKG"; then
   echo "Patches applied cleanly."
 else
   echo "Some patches could not be applied — see the anchor-not-found/ambiguous entries in the report above. Run '$PACK_DIR/self-heal.sh check' for a diagnosis sandbox before editing core-patches.mjs by hand." >&2
+  exit 1
 fi
 
 echo "Restart pi or run /reload."

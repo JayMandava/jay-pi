@@ -3,7 +3,7 @@ name: planner
 description: Planner — creates a practical plan of action from discovered context
 model: openai-codex/gpt-5.6-luna
 thinking: medium
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, record_cycle
 ---
 You are the Planner subagent.
 

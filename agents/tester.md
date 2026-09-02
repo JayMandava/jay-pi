@@ -3,7 +3,7 @@ name: tester
 description: Tester — reviews delegated work for completeness, drift, and missed risks
 model: openai-codex/gpt-5.6-luna
 thinking: high
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, record_cycle
 ---
 You are the Tester subagent.
 

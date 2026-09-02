@@ -188,17 +188,35 @@ function formatStatusLine(status: RunStatus, reason?: string): string {
   return `[status: ${status}]${reason ? ` ${reason}` : ""}`;
 }
 
-function hasSuccessfulCycleRecord(messages: Message[]): boolean {
-  return messages.some((msg: any) => msg?.role === "toolResult" && msg?.toolName === "record_cycle" && !msg?.isError);
+// Checking toolName alone isn't enough: a run is "successful" here only if
+// record_cycle was called for the STAGE this role owns. Correlate each
+// successful toolResult back to its originating toolCall via toolCallId to
+// read the stage argument that was actually passed — a Developer that calls
+// record_cycle with stage="feedback" (wrong stage, right tool) must not be
+// able to pass as a verified implementation record.
+function hasSuccessfulCycleRecord(messages: Message[], expectedStage: string): boolean {
+  const stageByCallId = new Map<string, unknown>();
+  for (const msg of messages as any[]) {
+    if (msg?.role !== "assistant" || !Array.isArray(msg?.content)) continue;
+    for (const part of msg.content) {
+      if (part?.type === "toolCall" && part?.name === "record_cycle" && part?.id) {
+        stageByCallId.set(part.id, (part?.arguments as any)?.stage);
+      }
+    }
+  }
+  return messages.some((msg: any) => {
+    if (msg?.role !== "toolResult" || msg?.toolName !== "record_cycle" || msg?.isError) return false;
+    return stageByCallId.get(msg?.toolCallId) === expectedStage;
+  });
 }
 
 function deriveCompletionStatus(agentName: string, gated: boolean, messages: Message[]): { status: RunStatus; reason?: string } {
   if (!gated) return { status: "failed" };
   const stage = LIFECYCLE_STAGE_BY_ROLE[agentName];
-  if (stage && !hasSuccessfulCycleRecord(messages)) {
+  if (stage && !hasSuccessfulCycleRecord(messages, stage)) {
     return {
       status: "incomplete",
-      reason: `Exited clean but no successful record_cycle call (stage: ${stage}) was observed — the ${stage} DB record for this run may be missing. Not necessarily an error: some tasks legitimately don't produce one, but check before treating this run as a verified completion.`,
+      reason: `Exited clean but no successful record_cycle call for stage "${stage}" was observed — the ${stage} DB record for this run may be missing (a record_cycle call for a different stage doesn't count). Not necessarily an error: some tasks legitimately don't produce one, but check before treating this run as a verified completion.`,
     };
   }
   return { status: "completed" };
