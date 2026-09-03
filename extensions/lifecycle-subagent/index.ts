@@ -783,6 +783,17 @@ async function startRun(
             { deliverAs: "followUp", triggerTurn: true },
           );
         }
+      } catch (error) {
+        // pi.sendMessage throws if the session that started this run has
+        // since been replaced (newSession/fork/switchSession/reload) — the
+        // captured pi/ctx reference goes stale, and there's no live session
+        // left to hand off to anyway. The run's real outcome is already
+        // durably on disk (data/subagent-runs/<runId>.json) regardless of
+        // whether this notification succeeds, so swallow this rather than
+        // letting an unhandled rejection crash the whole pi process — a
+        // background subagent finishing should never be able to take down
+        // an unrelated, already-moved-on session.
+        console.error(`[lifecycle-subagent] handoff notification for ${record.runId} failed (session likely replaced):`, error);
       } finally {
         activeRuns.delete(record.runId);
       }
