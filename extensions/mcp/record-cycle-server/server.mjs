@@ -60,27 +60,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		return { content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }], isError: true };
 	}
 
-	const args = request.params.arguments ?? {};
-	const result = writeCycleRecord({
-		cwd: process.cwd(),
-		stage: args.stage,
-		summary: args.summary,
-		data: args.data,
-		cycleId: args.cycleId,
-	});
+	// writeCycleRecord shells out to the sqlite3 CLI — an unexpected failure
+	// there (not found, permission denied, disk full, etc.) must not be
+	// allowed to throw uncaught out of this handler: a single bad call
+	// crashing the whole server would take down every future record_cycle
+	// call for the rest of the session, not just this one.
+	try {
+		const args = request.params.arguments ?? {};
+		const result = writeCycleRecord({
+			cwd: process.cwd(),
+			stage: args.stage,
+			summary: args.summary,
+			data: args.data,
+			cycleId: args.cycleId,
+		});
 
-	if (!result.ok) {
-		return { content: [{ type: "text", text: result.reason }], isError: true };
+		if (!result.ok) {
+			return { content: [{ type: "text", text: result.reason }], isError: true };
+		}
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: `Recorded ${result.stage} cycle row ${result.rowId} in ${result.dbPath}${result.cycleId ? ` (cycle ${result.cycleId})` : ""}.`,
+				},
+			],
+		};
+	} catch (error) {
+		return { content: [{ type: "text", text: `record_cycle failed unexpectedly: ${error?.message ?? String(error)}` }], isError: true };
 	}
-
-	return {
-		content: [
-			{
-				type: "text",
-				text: `Recorded ${result.stage} cycle row ${result.rowId} in ${result.dbPath}${result.cycleId ? ` (cycle ${result.cycleId})` : ""}.`,
-			},
-		],
-	};
 });
 
 const transport = new StdioServerTransport();

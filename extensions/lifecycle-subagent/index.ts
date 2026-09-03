@@ -35,9 +35,16 @@ function isRecordCycleToolName(name: unknown): boolean {
 function writeRecordCycleMcpConfig(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-mcp-"));
   const configPath = path.join(dir, "mcp-config.json");
+  // claude spawns this MCP server in its own subprocess environment, which
+  // isn't guaranteed to resolve a bare "node" via PATH the same way the
+  // parent pi process does (nvm-managed installs especially) — a live
+  // failure showed the server connection closing immediately, consistent
+  // with the spawn itself failing to find "node". process.execPath is the
+  // exact, absolute path to the Node binary already running this process,
+  // which sidesteps PATH resolution entirely.
   fs.writeFileSync(
     configPath,
-    JSON.stringify({ mcpServers: { "record-cycle": { command: "node", args: [RECORD_CYCLE_MCP_SERVER_PATH] } } }, null, 2),
+    JSON.stringify({ mcpServers: { "record-cycle": { command: process.execPath, args: [RECORD_CYCLE_MCP_SERVER_PATH] } } }, null, 2),
   );
   return configPath;
 }
