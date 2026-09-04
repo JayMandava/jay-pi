@@ -49,10 +49,10 @@ function writeRecordCycleMcpConfig(): string {
   return configPath;
 }
 
-type RunStatus = "running" | "completed" | "incomplete" | "failed" | "canceled";
+type RunStatus = "running" | "completed" | "incomplete" | "failed" | "canceled" | "orphaned";
 type RunMode = "single";
 
-const TERMINAL_RUN_STATUSES = new Set<RunStatus>(["completed", "incomplete", "failed", "canceled"]);
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>(["completed", "incomplete", "failed", "canceled", "orphaned"]);
 
 // planner/developer/tester are expected to log their stage via the
 // record_cycle tool (see extensions/cycle-records.ts) when they actually do
@@ -315,6 +315,60 @@ function listRuns(cwd: string): RunRecord[] {
     }
   }
   return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+// `process.kill(pid, 0)` sends no signal — it only probes whether a process
+// with that pid exists. ESRCH means it doesn't (dead); EPERM means it exists
+// but is owned by another user (still alive, just not signalable by us).
+// Known, accepted limitation: on a long-lived machine the OS can reuse a pid
+// after the original process exits, which would make a genuinely-dead run
+// look alive again. That's the standard tradeoff of any pid-liveness check,
+// not something worth building a lock file or process-group tracking system
+// to close for what is meant to be a best-effort crash-recovery sweep.
+function isPidAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
+// Recovers from the one crash scenario nothing else in this file catches:
+// pi (or the whole machine) dying while a subagent is mid-run leaves that
+// run's JSON record stuck at status "running" forever — no process is left
+// to ever flip it to a terminal state, so it would silently look "still in
+// progress" indefinitely to anything that reads it later (subagent-status's
+// widget, a future `subagent status` call, a human reading the file).
+// Run once per interactive session start rather than on every subagent's
+// own process (each background pi/claude subprocess also loads this
+// extension) — doesn't need to happen more than once per lead session, and
+// running it from every subagent process too would just be redundant
+// contention on the same JSON files with no added benefit.
+function sweepOrphanedRuns(cwd: string): void {
+  const dir = getRunsDir(cwd);
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir).filter((name) => name.endsWith(".json"));
+  } catch {
+    return; // no data/subagent-runs directory yet for this project — nothing to sweep
+  }
+
+  for (const file of files) {
+    let record: RunRecord;
+    try {
+      record = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")) as RunRecord;
+    } catch {
+      continue; // unreadable/partially-written — leave it, not this sweep's job to fix
+    }
+    if (record.status !== "running") continue;
+    if (isPidAlive(record.pid)) continue;
+
+    record.status = "orphaned";
+    record.statusReason = `No live process (pid ${record.pid ?? "unknown"}) was found for this run at the start of a new session — pi or the subagent process likely crashed or was killed before it could finish and report its own outcome. Whatever partial work or DB writes happened before the crash are still wherever they landed; this run itself never reached a real terminal state on its own.`;
+    saveRun(record);
+  }
 }
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
@@ -810,6 +864,11 @@ async function startRun(
 }
 
 export default function lifecycleSubagent(pi: ExtensionAPI) {
+  pi.on("session_start", async (_event, ctx) => {
+    if (ctx.mode !== "tui") return; // only the interactive lead session sweeps, not every background subagent process
+    sweepOrphanedRuns(ctx.cwd);
+  });
+
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
@@ -1075,7 +1134,7 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
           artifactPath: finalRecord.artifactPath,
           results: finalRecord.results,
         } satisfies SubagentDetails,
-        isError: finalRecord.status === "failed",
+        isError: finalRecord.status === "failed" || finalRecord.status === "orphaned",
       };
     },
   });

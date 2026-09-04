@@ -70,6 +70,12 @@ Why: a subagent's closing chat message is not proof that a DB record was actuall
 
 **Confirmed live in testing, not hypothetical:** Planner (running a mid-strength model) wrote its Approach row by hand via `bash`/`sqlite3` instead of calling `record_cycle`, then its own closing message claimed *"record_cycle stage approach recorded successfully"* — false. The `incomplete` status caught it correctly by checking the actual message trace rather than trusting that sentence. This is exactly why the tool result text always leads with the real computed status (`[status: ...]`) now, not just whatever prose the subagent returned — see `formatStatusLine` in `lifecycle-subagent/index.ts`.
 
+### The `orphaned` run status
+
+A fourth post-run state: `orphaned`. If `pi` (or the whole machine) crashes while a subagent is mid-run, that run's JSON record would otherwise stay stuck at `status: "running"` forever — nothing is left alive to ever flip it to a terminal state. To catch this, every interactive Lead session sweeps `data/subagent-runs/*.json` at startup for records still marked `running` whose process is no longer alive (checked via `process.kill(pid, 0)`), and flips those to `orphaned`.
+
+Like `incomplete`, `orphaned` is a fact about the machinery, not a verdict on the work — it means the process watching the run died, not that the run's actual output was necessarily bad. Whatever the subagent did before the crash (files edited, partial DB writes) is still wherever it landed; check the run's own message trace to see how far it got before deciding whether to redo the task. This sweep only runs from the interactive Lead session (not from every background subagent's own process, which would just be redundant), so it fires once per new session start, not continuously.
+
 ## Verifiable Actions Rule
 
 The lesson above generalizes past `record_cycle`. Anything with a real effect — a DB write, an external-sink write, a browser check via Playwright MCP, any MCP-backed action — should be a **tool call that shows up in the message trace**, not a claim in prose. A role's own summary of what it did is narration; only an actual tool call (or its absence) is fact.

@@ -26,10 +26,13 @@ your own `~/.pi/agent/` directory.
     (in the background by default) either as another pi process or, via
     `runner: "claude-cli"`, as a `claude -p` invocation — useful for bridging
     to Claude-Code-native skills that pi's own subagent tool can't spawn.
-    Reports a run's outcome as `completed`, `incomplete`, or `failed` (see
-    `cycle-records.ts` below for what `incomplete` means), and supports
-    scoping each child process's environment — see "Security posture" below,
-    since this ships as a full clone by default, not scoped out of the box.
+    Reports a run's outcome as `completed`, `incomplete`, `failed`, or
+    `orphaned` (see `cycle-records.ts` below for what `incomplete` means;
+    `orphaned` means the process running it died mid-run — e.g. a `pi`
+    crash — and was caught by a startup sweep in a later session, not that
+    the work itself failed), and supports scoping each child process's
+    environment — see "Security posture" below, since this ships as a full
+    clone by default, not scoped out of the box.
   - `cycle-records.ts` — registers the `record_cycle` tool: the actual,
     machine-verified way Planner/Developer/Tester write their DB records,
     replacing freehand `sqlite3` calls the model used to construct itself.
