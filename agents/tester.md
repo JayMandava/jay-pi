@@ -33,3 +33,4 @@ Output shape:
 - rubric/version checked against, if one was used
 - specific follow-up actions
 - confirmation of the `record_cycle` call (stage: feedback)
+- Jev cross-check matrix, if the `record_cycle` tool result included one (only present if `extensions/jev-parallel-check.ts` is configured — see README.md) — restate it verbatim; it's an independent, informational-only signal computed after your verdict was already recorded and never changes it

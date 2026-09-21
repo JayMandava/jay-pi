@@ -64,6 +64,10 @@ your own `~/.pi/agent/` directory.
   - `lead-idle-timeout.ts` — aborts a run that's made no forward progress
     for a configurable window, instead of burning tokens stuck in a loop.
   - `tokens-per-second.ts` — a small footer stat.
+  - `jev-parallel-check.ts` — an optional second opinion on Tester's verdict
+    from [TypeSafe's Jev](https://typesafe.ai), a calibrated classifier
+    rather than a chat model. Fully inert until you set `JEV_API_KEY` — see
+    "Optional: Jev cross-check" below.
 - **`patches/`** — a self-healing patch system for hand-fixing bugs in the
   installed `pi-coding-agent` npm package that would otherwise get wiped by
   every pi upgrade. Content-anchored (not line-diff-based), so it survives pi
@@ -124,6 +128,28 @@ back there — but only after a human has seen the literal draft — copy
 `config/external-sink.example.json` to `~/.pi/agent/external-sink.json` and
 edit it to list the write-tool names for whatever MCP server you're using.
 Nothing is gated until this file exists.
+
+### Optional: Jev cross-check
+
+`extensions/jev-parallel-check.ts` asks [TypeSafe's Jev](https://typesafe.ai)
+— a calibrated Choice/Score/Noul classifier, not a chat model — three
+independent yes/no questions (plan fidelity, drift, risk coverage) about
+Developer's diff every time Tester writes its `feedback` record, built only
+from the approved plan and a live `git diff`, never from Tester's own
+verdict. The result gets appended to that same `record_cycle` tool result
+(so Tester restates it verbatim in its report) and logged durably to
+`data/jev-parallel-check.db` — purely informational, it never blocks,
+gates, or changes Tester's already-recorded verdict.
+
+This does nothing until you configure it, and costs nothing if you never
+do:
+1. Get an API key at [console.typesafe.ai](https://console.typesafe.ai).
+2. Set `JEV_API_KEY` in your environment (or add `JEV_API_KEY=...` to
+   `~/.pi/.env`).
+
+No key set → the extension silently no-ops on every feedback cycle. Same
+for a timed-out or failing request (8s timeout) — Tester's own run is never
+affected either way.
 
 ### Optional: scoping subagent environments
 
