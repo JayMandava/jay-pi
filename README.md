@@ -222,6 +222,22 @@ build it out into a real allowlist) before you rely on background runs.
   [@DietrichGebert](https://github.com/DietrichGebert) for an
   over-engineering/complexity review pass — install it as a pi package if you
   want that step.
+- The `orphaned` run status was borrowed from a comparison against
+  [SenteLabsAI/OpenExecutive](https://github.com/SenteLabsAI/OpenExecutive)
+  — a different kind of multi-agent system, but its scheduler has a
+  boot-time sweep for exactly this class of bug (a run stuck mid-flight
+  after a crash).
+- `grill.ts` (the code-enforced Grilling Discipline tool), `plan-approval.ts`
+  (the Developer mutation guard), and the `data/history.jsonl` audit ledger
+  were all borrowed from a comparison against
+  [CraftsMan-Labs/HarnessEngineeringWorkshop](https://github.com/CraftsMan-Labs/HarnessEngineeringWorkshop)'s
+  `dsh-software-factory` plugin — specifically its "Grill Me" one-question-
+  at-a-time pattern, its ticket-state mutation guard, and its flat
+  append-only `history.jsonl` ledger.
+- `extensions/jev-parallel-check.ts` integrates [Jev](https://typesafe.ai)
+  by [TypeSafe](https://console.typesafe.ai) — a calibrated Choice/Score/
+  Noul classifier used here as an optional, independent second opinion on
+  Tester's verdict. Fully optional; see "Optional: Jev cross-check" above.
 
 ## License
 
