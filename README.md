@@ -1,17 +1,63 @@
+<div align="center">
+
 # pi-harness
 
-A role-based subagent harness for [pi](https://github.com/earendil-works/pi-coding-agent):
-a **Lead** agent that orchestrates planning, implementation, and checking
-across three subagent roles (**Planner**, **Developer**, **Tester**) and
-performs the final review itself, with structured SQLite capture at every
-stage (written through a tool call, not freehand SQL — see below), a
-human-in-the-loop review pattern ("Grilling Discipline") instead of single
-yes/no gates, and an optional, gated write-back to whatever external tracker
-you use.
+**Harness engineering for [pi](https://github.com/earendil-works/pi-coding-agent).**
+The harness decides whether a strong model actually finishes the job.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-111111?style=flat-square)](LICENSE)
+[![Built for pi](https://img.shields.io/badge/built%20for-pi-111111?style=flat-square)](https://github.com/earendil-works/pi-coding-agent)
+[![Setup](https://img.shields.io/badge/setup-one--shot-d98b2b?style=flat-square)](#install)
+[![Gated by default](https://img.shields.io/badge/writes-code--enforced-2f7a4f?style=flat-square)](#why-the-structured-db-writes-and-the-non-completed-run-statuses)
+
+</div>
+
+A role-based subagent harness for pi: a **Lead** agent that orchestrates
+planning, implementation, and checking across three subagent roles
+(**Planner**, **Developer**, **Tester**) and performs the final review
+itself, with structured SQLite capture at every stage (written through a
+tool call, not freehand SQL — see below), a human-in-the-loop review
+pattern ("Grilling Discipline") instead of single yes/no gates, and an
+optional, gated write-back to whatever external tracker you use.
 
 This isn't a pi fork or plugin — it's an `AGENTS.md` operating contract plus a
 handful of pi extensions and agent-role prompt files that you install into
 your own `~/.pi/agent/` directory.
+
+**Jump to:** [How it fits together](#how-it-fits-together) ·
+[What's in here](#whats-in-here) ·
+[Install](#install) ·
+[Security posture](#security-posture--read-before-you-install) ·
+[Credits](#credits)
+
+## How it fits together
+
+```mermaid
+flowchart TB
+    H["Human"] --> L["Lead\n(orchestrates + final review)"]
+    L -->|"1 plan"| P["Planner\napproach.db"]
+    L -->|"2 implement, after approve_plan"| D["Developer\nimplementation.db"]
+    L -->|"3 check"| T["Tester\nfeedback.db"]
+    P -.->|"auto-handoff"| L
+    D -.->|"auto-handoff"| L
+    T -.->|"auto-handoff"| L
+    L -->|"4 review"| R["review.db"]
+```
+
+Each role is a separate top-level `pi` (or `claude`) process, not a nested
+sub-agent call — a dropped stream in one never takes the rest down. Every
+stage write goes through `record_cycle`, which `lifecycle-subagent` checks
+against the actual message trace, not the subagent's own account of it:
+
+```mermaid
+flowchart LR
+    A["Run exits clean"] --> B{"record_cycle called\nfor the right stage?"}
+    B -->|"yes"| C["completed"]
+    B -->|"no"| I["incomplete"]
+    Z["Run errors"] --> F["failed"]
+    K["Human runs subagent cancel"] --> X["canceled"]
+    W["pi crashes mid-run"] --> O["orphaned\n(caught by next session's sweep)"]
+```
 
 ## What's in here
 
