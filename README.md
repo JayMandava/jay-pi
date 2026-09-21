@@ -124,20 +124,30 @@ cd pi-harness
 ./install.sh
 ```
 
-This copies `extensions/`, `agents/`, and `patches/` into `~/.pi/agent/`
-(always fresh — that's this repo's actual content), and writes
+One shot, in order: installs `pi` itself if it's missing (or updates it if
+it's already there), checks for `sqlite3` (every DB-backed extension here
+shells out to it), copies `extensions/`, `agents/`, and `patches/` into
+`~/.pi/agent/` (always fresh — that's this repo's actual content), writes
 `settings.json` / `models.json` / `mcp.json` / `~/AGENTS.md` **only if they
-don't already exist** — it will never overwrite your own config.
+don't already exist** (never overwrites your own config), runs
+`self-heal.sh check` + `reapply.sh` automatically, and finishes by offering
+to launch `pi` right there.
 
-Then:
-1. Edit `~/.pi/agent/models.json` for the models you actually have (see
-   `docs/model-provider-setup.md` if you're wiring up a self-hosted model).
-2. Run `~/.pi/agent/patches/self-heal.sh check`, then
-   `~/.pi/agent/patches/reapply.sh`.
-3. Restart pi, or run `/reload`.
+Credentials are the one thing it deliberately doesn't try to automate —
+`pi` already has a good `/login` flow (Claude Pro/Max, ChatGPT Plus/Pro,
+GitHub Copilot, OpenRouter, and more) and standard `ANTHROPIC_API_KEY`/
+`OPENAI_API_KEY`-style env vars for API-key providers, so the script just
+hands off to that instead of reinventing it. Edit `~/.pi/agent/models.json`
+for the models you actually have (see `docs/model-provider-setup.md` if
+you're wiring up a self-hosted model), then either export a key or run
+`/login` inside `pi`.
+
+Skip specific steps with `PI_HARNESS_SKIP_PI_INSTALL=1` (don't touch your
+pi install) or `PI_HARNESS_SKIP_LAUNCH=1` (don't offer to launch `pi` at
+the end) — useful on a re-run or a pinned setup.
 
 Prefer to do it by hand instead of running the script? Everything it does is
-just a copy — read `install.sh`, it's short.
+short and readable — read `install.sh` directly.
 
 ### Optional: gating writes to an external tracker
 
