@@ -35,14 +35,16 @@ your own `~/.pi/agent/` directory.
 ```mermaid
 flowchart TB
     H["Human"] --> L["Lead\n(orchestrates + final review)"]
-    L -->|"1 plan"| P["Planner\napproach.db"]
-    L -->|"2 implement, after approve_plan"| D["Developer\nimplementation.db"]
-    L -->|"3 check"| T["Tester\nfeedback.db"]
-    P -.->|"auto-handoff"| L
-    D -.->|"auto-handoff"| L
-    T -.->|"auto-handoff"| L
-    L -->|"4 review"| R["review.db"]
+    L --> P["Planner\napproach.db"]
+    L --> D["Developer\nimplementation.db"]
+    L --> T["Tester\nfeedback.db"]
+    L --> R["review.db"]
 ```
+
+In order: Planner plans, Developer implements (only after `approve_plan`
+has fired), Tester checks, Lead reviews the whole cycle into `review.db`.
+Each role hands its result back to Lead automatically ("auto-handoff") the
+moment it finishes — Lead never polls for it.
 
 Each role is a separate top-level `pi` (or `claude`) process, not a nested
 sub-agent call — a dropped stream in one never takes the rest down. Every
