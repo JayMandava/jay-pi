@@ -20,6 +20,24 @@ export const STAGE_TABLE = {
 
 export const MIN_SUMMARY_CHARS = 40;
 
+// One flat, append-only, cross-stage ledger — approach/implementation/
+// feedback/review writes, grill exchanges, and plan approvals all land here
+// in chronological order. Complements the per-stage DBs (which are the
+// source of truth for each stage's structured record) rather than replacing
+// them: this is for "what happened, in order, across the whole cycle" as a
+// single `tail`/`cat`, not a join across four DBs. Best-effort — a failure
+// here must never block the actual write it's logging.
+export function appendHistoryEvent(cwd, event) {
+	try {
+		const dir = path.join(cwd, "data");
+		fs.mkdirSync(dir, { recursive: true });
+		const line = JSON.stringify({ timestamp: new Date().toISOString(), ...event });
+		fs.appendFileSync(path.join(dir, "history.jsonl"), `${line}\n`);
+	} catch {
+		// logging the event is never allowed to fail the event itself
+	}
+}
+
 function quoteSqlString(value) {
 	return `'${value.replace(/'/g, "''")}'`;
 }
@@ -78,7 +96,7 @@ export function writeCycleRecord({ cwd, stage, summary, data, cycleId }) {
 	// 0. Run both statements in one invocation so they share a connection.
 	const rowId = execFileSync("sqlite3", [dbPath, `${insertSql}\nSELECT last_insert_rowid();`]).toString().trim();
 
-	return {
+	const result = {
 		ok: true,
 		table: "cycles",
 		dbPath: path.relative(cwd, dbPath),
@@ -88,4 +106,15 @@ export function writeCycleRecord({ cwd, stage, summary, data, cycleId }) {
 		cycleId: trimmedCycleId,
 		createdAt,
 	};
+
+	appendHistoryEvent(cwd, {
+		event: "cycle_record",
+		stage,
+		role,
+		rowId: result.rowId,
+		cycleId: trimmedCycleId,
+		summary: trimmedSummary,
+	});
+
+	return result;
 }

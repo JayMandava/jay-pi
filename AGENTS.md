@@ -86,6 +86,10 @@ The lesson above generalizes past `record_cycle`. Anything with a real effect �
 
 This is a standing instruction for Lead's judgment where no code check exists yet, not a promise that every MCP call is automatically verified — extend the code-level check (mirroring `hasSuccessfulCycleRecord` in `lifecycle-subagent/index.ts`) if a specific claim-type keeps needing manual scrutiny.
 
+### The `history.jsonl` audit ledger
+
+Every `record_cycle` write, every `grill` exchange, and every `approve_plan` call also appends one line to `data/history.jsonl` — a flat, append-only, cross-stage timeline, in chronological order, of everything that actually happened in a cycle. The per-stage DBs (`approach.db`/`implementation.db`/`feedback.db`/`review.db`) remain the source of truth for each stage's structured record; this ledger is for "what happened, in order, across the whole cycle" as a single `tail`/`cat`, not a four-way join. Best-effort only — logging to it is never allowed to block or fail the write it's logging.
+
 ## Subagent Process Isolation
 
 Every background Planner/Developer/Tester run is a separate top-level `pi` or `claude` child process (never a nested sub-agent facility inside another harness) — this is deliberate: independent top-level processes survive a dropped stream or a crashed turn without taking the rest of a fan-out down with them, where nested sub-agent facilities are more fragile to a single bad stream. Don't collapse this into an in-process "spawn a nested agent" call even if a future pi/Claude version makes that easier — the isolation is the point.
@@ -161,6 +165,8 @@ Every human-in-loop gate in this file (POA review, Developer's output review, Te
 - Do not act until the human has confirmed a shared understanding
 
 This applies to phase-boundary approvals and to external-sink content previews alike.
+
+**Use the `grill` tool for every grilling-gate question, not freeform chat.** It requires a `recommended` field (schema-enforced — the call fails before it runs if you omit one) and blocks on the human's actual answer, so "one question at a time" is true by construction rather than by discipline. The gap this closes: nothing stops Lead from bundling three questions into one chat message today except its own restraint — routing through `grill` removes that gap and durably logs every question/default/answer to `data/history.jsonl`.
 
 ## External Sink Rule
 
@@ -452,6 +458,14 @@ Keep a human in the loop for:
 - approving risky production changes
 
 Every one of these runs as a Grilling Discipline session (see above), not a single yes/no prompt.
+
+## Plan Approval Gate
+
+The first bullet above ("approving the plan") is now code-enforced, not just convention: `lifecycle-subagent` refuses to spawn Developer unless the human has called **`approve_plan`** against the latest `approach.db` row. Call `approve_plan` only after a real Grilling Discipline session on the plan, never on a subagent's own say-so — it requires an interactive session and cannot be called from a background subagent.
+
+The approval is tied to a specific `approach.db` row id, not just "approval happened at some point" — if Planner revises the plan (a new row lands after a prior approval), that old approval does not carry over; call `approve_plan` again against the new row.
+
+`skipApprovalGuard: true` on the `subagent` tool bypasses this for a deliberate, explicit exception — it still requires an interactive confirmation dialog, and is refused outright if no UI is available to confirm it. Use it rarely and knowingly; it exists for genuine exceptions, not as a habitual way around getting a real approval.
 
 ## Bias toward standard paths
 

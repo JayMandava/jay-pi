@@ -11,6 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { getLatestApproachRowId, isApproachRowApproved } from "../plan-approval.ts";
 
 const CLAUDE_DEFAULT_MODEL = "claude-sonnet-4-6";
 const RUNS_DIR = path.join("data", "subagent-runs");
@@ -170,6 +171,10 @@ const SubagentParams = Type.Object({
   background: Type.Optional(Type.Boolean({ default: true })),
   autoHandoff: Type.Optional(Type.Boolean({ default: true })),
   confirmProjectAgents: Type.Optional(Type.Boolean({ default: true })),
+  skipApprovalGuard: Type.Optional(Type.Boolean({
+    default: false,
+    description: "Deliberately bypass the plan-approval guard when spawning Developer. Requires an explicit interactive confirmation — never use this to route around getting a real human approval.",
+  })),
 });
 
 function emptyUsage(): UsageStats {
@@ -1044,6 +1049,35 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
               projectAgentsDir: discovery.projectAgentsDir,
             } satisfies SubagentDetails,
           };
+        }
+      }
+
+      // Code-enforced version of "Lead just doesn't invoke Developer before
+      // the plan is approved" — see plan-approval.ts. Tied to the specific
+      // latest approach.db row, not just "approval happened at some point",
+      // so a plan revision after approval doesn't stay silently authorized.
+      if (agent.name === "developer") {
+        const approachRowId = getLatestApproachRowId(ctx.cwd);
+        const approved = approachRowId !== null && isApproachRowApproved(ctx.cwd, approachRowId);
+        if (!approved) {
+          const reason = approachRowId === null
+            ? "no approach.db row found — run Planner and get the plan approved (approve_plan) first"
+            : `approach.db row ${approachRowId} (the latest plan) has not been approved yet — call approve_plan after a real Grilling Discipline review with the human`;
+          if (!params.skipApprovalGuard) {
+            return {
+              content: [{ type: "text", text: `Refusing to spawn Developer: ${reason}. Pass skipApprovalGuard: true for a deliberate, explicit exception.` }],
+              isError: true,
+            };
+          }
+          const confirmed = ctx.hasUI
+            ? await ctx.ui.confirm("Skip plan-approval guard?", `Spawning Developer without an approved plan: ${reason}.\n\nOnly continue if this is a deliberate, explicit exception.`)
+            : false;
+          if (!confirmed) {
+            return {
+              content: [{ type: "text", text: `Canceled: plan-approval guard not bypassed (${ctx.hasUI ? "human declined" : "no interactive UI available to confirm the bypass"}).` }],
+              isError: true,
+            };
+          }
         }
       }
 

@@ -58,6 +58,19 @@ your own `~/.pi/agent/` directory.
   - `external-sink-gate.ts` — a generic version of "never write to an
     external system without a human seeing the literal payload first."
     Nothing is gated until you configure it — see `config/external-sink.example.json`.
+  - `grill.ts` — registers the `grill` tool: code-enforces the Grilling
+    Discipline pattern above instead of leaving it as a prose convention.
+    `recommended` is a schema-required field (the call fails validation
+    without one), and it blocks on the human's actual answer, so "one
+    question at a time" holds by construction, not by discipline. Requires
+    an interactive session — refuses cleanly from a background subagent.
+  - `plan-approval.ts` — registers the `approve_plan` tool, and
+    `lifecycle-subagent` refuses to spawn Developer until the human has
+    called it against the latest `approach.db` row. Tied to a specific row
+    id, not "approval happened at some point" — a plan revision after
+    approval isn't silently still authorized. `skipApprovalGuard: true` on
+    `subagent` bypasses this for a deliberate exception, but still requires
+    an interactive confirmation and refuses outright with no UI to confirm.
   - `agents-md-freshness.ts` — warns if a resumed/forked session's context
     predates the current `AGENTS.md`, so a stale operating contract doesn't
     silently keep running.
@@ -96,6 +109,12 @@ nothing catches it. Two things here exist specifically to close that gap:
   honest "this may not have actually happened" signal instead of a silent
   false `completed`. It isn't automatically a failure (some tasks legitimately
   don't touch the DB) — it's a prompt for Lead to check before trusting the run.
+
+Every `record_cycle` write, `grill` exchange, and `approve_plan` call also
+appends one line to `data/history.jsonl` — a flat, append-only, cross-stage
+timeline of everything that happened in a cycle, in order. The per-stage DBs
+stay the source of truth for each stage's own record; this is for "what
+happened, across the whole cycle" as one `tail`, not a four-way join.
 
 ## Install
 
