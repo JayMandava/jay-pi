@@ -13,13 +13,14 @@ The lead agent running this session is **Lead** — it orchestrates the three su
 | 3 | Delegate to Planner for planning, then Developer for implementation, with `autoHandoff: true` | Session Start Rule |
 | 4 | Wait for auto-handoff — do not poll manually | Handoff Rule |
 | 5 | Before asking the human anything a subagent flagged as "unresolved," check the resolved profile/DB/docs first | Self-Resolution Rule |
-| 6 | Run every human-in-loop gate as a grilling session, not a single approve/reject | Grilling Discipline |
-| 7 | Planner logs Plan of Action to the external sink after POA approval (optional — see below) | External Sink Rule |
-| 8 | Developer logs Implementation Notes to the external sink after its output is approved (optional) | External Sink Rule |
-| 9 | Tester logs Observations to the external sink after its findings are approved (optional) | External Sink Rule |
-| 10 | Lead does a final PR review (correctness + any installed complexity/scoring skills), logs PR Review to the external sink after approval | PR Review Rule |
-| 11 | Always preview the literal draft and get explicit go-ahead before writing to any external sink | External Sink Content Rules |
-| 12 | Send a notification on completion (optional) | Notification Rules |
+| 6 | Run every human-in-loop gate as a grilling session (via the `grill` tool), not a single approve/reject | Grilling Discipline |
+| 7 | Call `approve_plan` once the human greenlights the plan — Developer cannot be spawned without it | Plan Approval Gate |
+| 8 | Planner logs Plan of Action to the external sink after POA approval (optional — see below) | External Sink Rule |
+| 9 | Developer logs Implementation Notes to the external sink after its output is approved (optional) | External Sink Rule |
+| 10 | Tester logs Observations to the external sink after its findings are approved (optional) | External Sink Rule |
+| 11 | Lead does a final PR review (correctness + any installed complexity/scoring skills), logs PR Review to the external sink after approval | PR Review Rule |
+| 12 | Always preview the literal draft and get explicit go-ahead before writing to any external sink | External Sink Content Rules |
+| 13 | Send a notification on completion (optional) | Notification Rules |
 
 ## Purpose
 
@@ -62,9 +63,13 @@ Why: a subagent's closing chat message is not proof that a DB record was actuall
 
 `record_cycle` takes `{stage, cycleId?, role?, summary, data?}`. It rejects a `summary` under ~40 characters rather than silently accepting a thin one — if that happens, resend the full content, don't shrink it to fit (same principle as the External Sink Content Rules preview above: a rejection means something was lost on the way in).
 
+### Run statuses
+
+`lifecycle-subagent` reports one of five post-run states: `completed`, `incomplete`, `failed`, `canceled`, or `orphaned`. `canceled` is the plain one — a human explicitly stopped the run via `subagent cancel`, not a bug or a crash. The other two non-obvious ones are worth understanding on their own:
+
 ### The `incomplete` run status
 
-`lifecycle-subagent` reports three post-run states, not two: `completed`, `incomplete`, or `failed`. A Planner/Developer/Tester run that exits cleanly (exit code 0) but never made a successful `record_cycle` call is reported `incomplete`, not `completed` — the run record's `statusReason` names which stage's record is missing.
+A Planner/Developer/Tester run that exits cleanly (exit code 0) but never made a successful `record_cycle` call is reported `incomplete`, not `completed` — the run record's `statusReason` names which stage's record is missing.
 
 **`incomplete` is not automatically a failure.** Some tasks legitimately don't touch the DB (a quick question, a status check). It's an honest signal, not a verdict — when Lead sees it in a handoff, check whether a DB write was actually expected for that task before treating it as a problem. Silently re-labeling every `incomplete` as `completed` (or as `failed`) defeats the point of having a third state.
 
@@ -72,7 +77,7 @@ Why: a subagent's closing chat message is not proof that a DB record was actuall
 
 ### The `orphaned` run status
 
-A fourth post-run state: `orphaned`. If `pi` (or the whole machine) crashes while a subagent is mid-run, that run's JSON record would otherwise stay stuck at `status: "running"` forever — nothing is left alive to ever flip it to a terminal state. To catch this, every interactive Lead session sweeps `data/subagent-runs/*.json` at startup for records still marked `running` whose process is no longer alive (checked via `process.kill(pid, 0)`), and flips those to `orphaned`.
+If `pi` (or the whole machine) crashes while a subagent is mid-run, that run's JSON record would otherwise stay stuck at `status: "running"` forever — nothing is left alive to ever flip it to a terminal state. To catch this, every interactive Lead session sweeps `data/subagent-runs/*.json` at startup for records still marked `running` whose process is no longer alive (checked via `process.kill(pid, 0)`), and flips those to `orphaned`.
 
 Like `incomplete`, `orphaned` is a fact about the machinery, not a verdict on the work — it means the process watching the run died, not that the run's actual output was necessarily bad. Whatever the subagent did before the crash (files edited, partial DB writes) is still wherever it landed; check the run's own message trace to see how far it got before deciding whether to redo the task. This sweep only runs from the interactive Lead session (not from every background subagent's own process, which would just be redundant), so it fires once per new session start, not continuously.
 
@@ -328,7 +333,7 @@ Preferred lifecycle loop:
 3. Planner runs the intake checklist (external tracker / GitHub / local directories / other sources), then writes or updates `data/approach.db`
 4. Planner auto-handoff arrives — Lead surfaces the POA to the human as a grilling session
 5. after a successful update to `data/approach.db`, Lead creates or refreshes a human-readable Markdown plan file under `docs/`
-6. if the human has feedback, Lead routes it back to Planner; repeat until the human gives a green flag
+6. if the human has feedback, Lead routes it back to Planner; repeat until the human gives a green flag, then Lead calls **`approve_plan`** — this is what actually unblocks step 8 below, not just the human saying yes in chat (see Plan Approval Gate)
 7. once approved, Planner offers to log **Plan of Action** to the external sink (External Sink Content Rules preview first, if one is configured)
 8. Lead delegates implementation to Developer
 9. Developer's run writes to `data/implementation.db` via `record_cycle` before it finishes (not gated on approval — Developer's process exits before approval happens), then auto-handoff arrives — Lead surfaces the result to the human as a grilling session
@@ -533,7 +538,7 @@ For a new project, the harness should do this:
 1. Planner runs the intake checklist and ingests story context from wherever the human points it (external tracker, GitHub, local docs)
 2. resolve and silently adopt the session agent profile (session > project > global) when the session starts
 3. Planner creates an Approach record in `data/approach.db`
-4. human approves the plan via a grilling session; Planner offers to log Plan of Action to the external sink
+4. human approves the plan via a grilling session; Lead calls `approve_plan` (code-enforced — Developer cannot be spawned without it, see Plan Approval Gate); Planner offers to log Plan of Action to the external sink
 5. Developer executes implementation/testing work and writes to `data/implementation.db` before finishing (not gated on approval)
 6. human approves Developer's output; Developer offers to log Implementation Notes to the external sink
 7. Tester creates Feedback records in `data/feedback.db`
@@ -544,7 +549,7 @@ For a new project, the harness should do this:
 
 - `AGENTS.md` = operating instructions for agents
 - `docs/` = detailed harness design/specs and human-readable plan artifacts
-- `data/` = SQLite cycle memory and the project-level session profile (`data/agent-session-profile.json`)
+- `data/` = SQLite cycle memory, the project-level session profile (`data/agent-session-profile.json`), the cross-stage audit ledger (`data/history.jsonl`), and any optional extension data (e.g. `data/jev-parallel-check.db`)
 - global (user-level) agent profile state lives outside the project, shared across projects; project and session values override it per the session configuration rule
 - `scripts/` or `harness/` = automation implementation
 

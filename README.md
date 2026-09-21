@@ -26,11 +26,13 @@ your own `~/.pi/agent/` directory.
     (in the background by default) either as another pi process or, via
     `runner: "claude-cli"`, as a `claude -p` invocation — useful for bridging
     to Claude-Code-native skills that pi's own subagent tool can't spawn.
-    Reports a run's outcome as `completed`, `incomplete`, `failed`, or
-    `orphaned` (see `cycle-records.ts` below for what `incomplete` means;
-    `orphaned` means the process running it died mid-run — e.g. a `pi`
-    crash — and was caught by a startup sweep in a later session, not that
-    the work itself failed), and supports scoping each child process's
+    Reports a run's outcome as `completed`, `incomplete`, `failed`,
+    `canceled`, or `orphaned` (see `cycle-records.ts` below for what
+    `incomplete` means; `canceled` is a plain human-initiated
+    `subagent cancel`, not a bug; `orphaned` means the process running it
+    died mid-run — e.g. a `pi` crash — and was caught by a startup sweep in
+    a later session, not that the work itself failed), and supports scoping
+    each child process's
     environment — see "Security posture" below, since this ships as a full
     clone by default, not scoped out of the box.
   - `cycle-records.ts` — registers the `record_cycle` tool: the actual,
@@ -93,7 +95,7 @@ your own `~/.pi/agent/` directory.
   into pi, including a real gotcha around where the "enable thinking" flag
   actually needs to live in the request body.
 
-## Why the structured DB writes and the third run status
+## Why the structured DB writes and the non-`completed` run statuses
 
 If you're running smaller/self-hosted models alongside stronger hosted ones,
 prose-only procedural instructions ("write your record to the DB when
