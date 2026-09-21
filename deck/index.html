@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Harness Engineering: pi-harness</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #12151c;
+    --paper: #faf8f4;
+    --paper-card: #f0ede6;
+    --ink: #171a21;
+    --ink-muted: #5b5f6b;
+    --light-ink: #f2f0ea;
+    --light-muted: #8b8f9c;
+    --coral: #ff6b4a;
+    --teal: #1a8f6b;
+    --red: #c1443a;
+    --rule-light: #e2ddd2;
+    --rule-dark: #2a2e38;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #0a0b0e; overflow: hidden;
+    font-family: 'Rubik', sans-serif; height: 100%;
+  }
+  #viewport {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  }
+  #stage {
+    width: 1920px; height: 1080px; position: relative; transform-origin: center center;
+  }
+  .slide {
+    position: absolute; inset: 0; width: 1920px; height: 1080px;
+    padding: 128px 128px 160px; display: none; flex-direction: column;
+    box-sizing: border-box;
+  }
+  .slide.active { display: flex; }
+  .slide.dark { background: var(--navy); color: var(--light-ink); }
+  .slide.light { background: var(--paper); color: var(--ink); }
+  .mono { font-family: 'Fira Code', monospace; }
+  .footer-left, .footer-right {
+    position: absolute; bottom: 64px; font-size: 24px; font-weight: 500;
+  }
+  .footer-left { left: 128px; }
+  .footer-right { right: 128px; }
+  .kicker {
+    align-self: flex-start; background: var(--coral); color: var(--navy);
+    padding: 12px 26px; border-radius: 999px; font-weight: 600; font-size: 22px;
+  }
+  .kicker.lg { padding: 14px 30px; font-size: 24px; }
+  .bar {
+    width: 8px; height: 64px; background: var(--coral); border-radius: 4px;
+  }
+  .badge-num {
+    width: 100px; height: 100px; border-radius: 50%; background: var(--coral);
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .badge-num p { font-size: 44px; font-weight: 700; color: var(--navy); margin: 0; }
+  .badge-num.sm { width: 56px; height: 56px; }
+  .badge-num.sm p { font-size: 26px; }
+  .card {
+    background: #ffffff; border-radius: 20px; box-shadow: 0 4px 24px rgba(23,26,33,0.06);
+    display: flex; flex-direction: column;
+  }
+  .card-head {
+    padding: 24px 32px; border-radius: 20px 20px 0 0; color: #ffffff; font-weight: 600; font-size: 24px;
+  }
+  .card-body { padding: 32px; display: flex; flex-direction: column; gap: 16px; flex: 1; justify-content: center; }
+  .code-block {
+    background: var(--navy); border-radius: 20px; padding: 40px 48px;
+  }
+  .code-block p { font-family: 'Fira Code', monospace; color: var(--light-ink); line-height: 1.7; margin: 0; }
+  table.deck-table { width: 100%; border-collapse: collapse; border-radius: 16px; overflow: hidden; font-family: 'Rubik', sans-serif; }
+  table.deck-table th, table.deck-table td { padding: 18px 28px; text-align: left; }
+  table.deck-table th { background: var(--ink); color: var(--light-ink); font-weight: 600; }
+  .arrow-down { font-size: 40px; color: var(--light-muted); line-height: 1; text-align: center; }
+  h1, h2, h3, p { margin: 0; }
+  #controls {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 12px; align-items: center; z-index: 10;
+    font-family: 'Rubik', sans-serif; color: #cfd2da; font-size: 14px;
+  }
+  #controls button {
+    background: #1b1f29; color: #f2f0ea; border: 1px solid #2a2e38; border-radius: 8px;
+    width: 36px; height: 36px; cursor: pointer; font-size: 16px;
+  }
+  #controls button:hover { background: #262b38; }
+  @media print {
+    body { background: #fff; overflow: visible; }
+    #controls { display: none; }
+    #viewport { position: static; display: block; }
+    #stage { transform: none !important; width: auto; height: auto; }
+    .slide {
+      position: static; display: flex !important; width: 297mm; height: 167mm;
+      page-break-after: always;
+    }
+  }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="stage">
+
+    <section id="s1" class="slide dark active">
+      <div style="display:flex; flex-direction:column; gap:32px; max-width:1450px">
+        <div class="kicker lg">HARNESS ENGINEERING</div>
+        <h1 style="font-size:160px; font-weight:700; line-height:1.02">pi-harness</h1>
+        <p style="font-size:40px; color:var(--light-muted); line-height:1.4; max-width:1250px">A role-based subagent harness for pi. The harness decides whether a strong model actually finishes the job.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">github.com/JayMandava/jay-pi</div>
+      <div class="footer-right" style="color:#5b5f6b">MIT license</div>
+    </section>
+
+    <section id="s2" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div style="display:flex; gap:24px; align-items:center"><div class="bar"></div><p style="font-size:26px; font-weight:600; color:var(--light-muted)">The first question</p></div>
+        <h1 style="font-size:78px; font-weight:600; line-height:1.2; max-width:1550px">What actually makes an agent finish the job — the model, or everything around it?</h1>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">02 / 28</div>
+    </section>
+
+    <section id="s3" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div style="display:flex; gap:24px; align-items:center"><div class="bar"></div><p style="font-size:26px; font-weight:600; color:var(--light-muted)">Honest question</p></div>
+        <h1 style="font-size:82px; font-weight:600; line-height:1.2; max-width:1500px">Point a strong model at a repo. Say "build this." Done?</h1>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">03 / 28</div>
+    </section>
+
+    <section id="s4" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div style="display:flex; gap:24px; align-items:center"><div class="bar"></div><p style="font-size:26px; font-weight:600; color:var(--light-muted)">What happens next</p></div>
+        <h1 style="font-size:78px; font-weight:600; line-height:1.2; max-width:1500px">More context in the prompt. More drift in the output.</h1>
+        <p style="font-size:34px; color:var(--light-muted); max-width:1250px">A subagent says the DB write happened. It didn't. Nothing catches it — until the harness does.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">04 / 28</div>
+    </section>
+
+    <section id="s5" class="slide light">
+      <div class="kicker">WHY IT GETS WORSE</div>
+      <h2 style="font-size:54px; font-weight:600; line-height:1.2; margin-top:36px">The closing chat message is not the record.</h2>
+      <div style="display:flex; gap:32px; margin-top:36px; flex:1">
+        <div class="card" style="flex:1">
+          <div class="card-head" style="background:var(--red)">TRUSTING THE NARRATION</div>
+          <div class="card-body">
+            <p class="mono" style="font-size:26px; color:var(--ink); line-height:1.5">"record_cycle stage=approach<br>recorded successfully."</p>
+            <p style="font-size:26px; color:var(--ink-muted); line-height:1.5">What actually happened: the row was written by hand via bash/sqlite3. record_cycle was never called.</p>
+          </div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="card-head" style="background:var(--teal)">CHECKING THE MESSAGE TRACE</div>
+          <div class="card-body">
+            <p class="mono" style="font-size:26px; color:var(--ink); line-height:1.5">hasSuccessfulCycleRecord(<br>&nbsp;&nbsp;messages, "approach"<br>)</p>
+            <p style="font-size:26px; color:var(--ink-muted); line-height:1.5">No matching tool call in the actual trace &rarr; status: "incomplete", not "completed".</p>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">Confirmed live: a mid-strength model faked exactly this claim. The status caught it anyway.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">05 / 28</div>
+    </section>
+
+    <section id="s6" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div class="badge-num"><p>1</p></div>
+        <h1 style="font-size:132px; font-weight:700; line-height:1.05">The Harness</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1300px">Four roles, one operating contract, zero forking of pi.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">06 / 28</div>
+    </section>
+
+    <section id="s7" class="slide light">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:44px; flex:1">
+        <div class="kicker">PRINCIPLE</div>
+        <h1 style="font-size:100px; font-weight:600; line-height:1.12; max-width:1600px">The harness is the product, not the model.</h1>
+        <p style="font-size:36px; color:var(--ink-muted); max-width:1300px">Swap Sonnet for a self-hosted Qwen3.8 and the same contract still holds — same roles, same DB writes, same review gates.</p>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">07 / 28</div>
+    </section>
+
+    <section id="s8" class="slide light">
+      <div class="kicker">ARCHITECTURE</div>
+      <h2 style="font-size:52px; font-weight:600; margin-top:32px">One Lead. Three roles. Every arrow is a separate process.</h2>
+      <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px">
+        <div style="background:var(--ink); color:var(--light-ink); padding:20px 48px; border-radius:16px"><p style="font-size:28px; font-weight:600">Human</p></div>
+        <div class="arrow-down">&darr;</div>
+        <div style="background:var(--coral); color:var(--navy); padding:24px 64px; border-radius:16px"><p style="font-size:32px; font-weight:700">Lead</p></div>
+        <div class="arrow-down">&darr;</div>
+        <div style="display:flex; gap:40px">
+          <div class="card" style="padding:28px 44px; align-items:center; gap:6px"><p style="font-size:30px; font-weight:600">Planner</p><p style="font-size:22px; color:var(--light-muted)">plans the work</p></div>
+          <div class="card" style="padding:28px 44px; align-items:center; gap:6px"><p style="font-size:30px; font-weight:600">Developer</p><p style="font-size:22px; color:var(--light-muted)">builds it</p></div>
+          <div class="card" style="padding:28px 44px; align-items:center; gap:6px"><p style="font-size:30px; font-weight:600">Tester</p><p style="font-size:22px; color:var(--light-muted)">checks it</p></div>
+        </div>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); text-align:center; font-weight:500">Each box is a separate top-level process — a dropped stream in one never takes the others down.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">08 / 28</div>
+    </section>
+
+    <section id="s9" class="slide light">
+      <div class="kicker">ROLES</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">Every role writes to one DB, offers one sink section.</h2>
+      <table class="deck-table" style="font-size:30px; margin-top:32px">
+        <tr><th style="width:22%">ROLE</th><th style="width:34%">WRITES TO</th><th style="width:44%">SINK SECTION</th></tr>
+        <tr style="background:#fff"><td style="font-weight:600">Planner</td><td class="mono" style="font-size:26px">approach.db</td><td>Plan of Action</td></tr>
+        <tr style="background:var(--paper-card)"><td style="font-weight:600">Developer</td><td class="mono" style="font-size:26px">implementation.db</td><td>Implementation Notes</td></tr>
+        <tr style="background:#fff"><td style="font-weight:600">Tester</td><td class="mono" style="font-size:26px">feedback.db</td><td>Observations</td></tr>
+        <tr style="background:var(--paper-card)"><td style="font-weight:600">Lead</td><td class="mono" style="font-size:26px">review.db</td><td>PR Review</td></tr>
+      </table>
+      <p style="font-size:28px; color:var(--ink-muted); margin-top:32px">Every write goes through <b>record_cycle</b>, not freehand SQL. Every sink write is previewed to the human first.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">09 / 28</div>
+    </section>
+
+    <section id="s10" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div class="badge-num"><p>2</p></div>
+        <h1 style="font-size:112px; font-weight:700; line-height:1.08">Trust, Not Narration</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1300px">The write is truth. The chat message is not.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">10 / 28</div>
+    </section>
+
+    <section id="s11" class="slide light">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:44px; flex:1">
+        <div class="kicker">PRINCIPLE</div>
+        <h1 style="font-size:92px; font-weight:600; line-height:1.15; max-width:1650px">A subagent's account of what it did is narration.</h1>
+        <p style="font-size:44px; color:var(--coral); font-weight:600">Only the tool call is fact.</p>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">11 / 28</div>
+    </section>
+
+    <section id="s12" class="slide light">
+      <div class="kicker">record_cycle</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">A thin summary is rejected, not silently accepted.</h2>
+      <div class="code-block" style="flex:1; margin-top:32px">
+        <p style="font-size:29px">const MIN_SUMMARY_CHARS = 40;<br><br>if (trimmedSummary.length &lt; MIN_SUMMARY_CHARS) {<br>&nbsp;&nbsp;return {<br>&nbsp;&nbsp;&nbsp;&nbsp;ok: false,<br>&nbsp;&nbsp;&nbsp;&nbsp;reason: <span style="color:var(--coral)">"content was lost on the way in &mdash;<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;resend the full summary, don't<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;shrink it to fit."</span><br>&nbsp;&nbsp;};<br>}</p>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">Shrinking content to get past a gate is a bug, not a workaround.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">12 / 28</div>
+    </section>
+
+    <section id="s13" class="slide light">
+      <div class="kicker">RUN STATUSES</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">Five outcomes. Never just pass or fail.</h2>
+      <table class="deck-table" style="font-size:28px; margin-top:32px">
+        <tr><th style="width:26%">STATUS</th><th style="width:74%">WHAT IT MEANS</th></tr>
+        <tr style="background:#fff"><td class="mono" style="color:var(--teal)">completed</td><td>Exited clean, record_cycle succeeded for the right stage</td></tr>
+        <tr style="background:var(--paper-card)"><td class="mono" style="color:var(--coral)">incomplete</td><td>Exited clean, but no successful record_cycle call was found</td></tr>
+        <tr style="background:#fff"><td class="mono" style="color:var(--red)">failed</td><td>The process itself exited with an error</td></tr>
+        <tr style="background:var(--paper-card)"><td class="mono" style="color:var(--ink-muted)">canceled</td><td>A human explicitly stopped the run &mdash; not a bug</td></tr>
+        <tr style="background:#fff"><td class="mono" style="color:var(--ink-muted)">orphaned</td><td>pi crashed mid-run; caught by the next session's startup sweep</td></tr>
+      </table>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">13 / 28</div>
+    </section>
+
+    <section id="s14" class="slide light">
+      <div class="kicker">CONFIRMED LIVE, NOT HYPOTHETICAL</div>
+      <h2 style="font-size:50px; font-weight:600; margin-top:28px">A real Planner run, caught mid-lie.</h2>
+      <div style="flex:1; display:flex; flex-direction:column; gap:20px; justify-content:center">
+        <div class="card" style="padding:30px 40px; box-shadow:0 4px 20px rgba(23,26,33,0.06); border-radius:16px">
+          <p style="font-size:22px; color:var(--light-muted); font-weight:600">PLANNER'S CLOSING MESSAGE</p>
+          <p style="font-size:32px; font-style:italic; color:var(--ink); margin-top:10px">"record_cycle stage approach recorded successfully."</p>
+        </div>
+        <div style="background:var(--paper-card); padding:30px 40px; border-radius:16px">
+          <p style="font-size:22px; color:var(--light-muted); font-weight:600">WHAT ACTUALLY HAPPENED</p>
+          <p style="font-size:30px; color:var(--ink); margin-top:10px">It wrote the row by hand via bash and sqlite3. record_cycle was never called. False.</p>
+        </div>
+        <div style="background:var(--ink); padding:30px 40px; border-radius:16px">
+          <p style="font-size:22px; color:var(--coral); font-weight:600">CAUGHT BY</p>
+          <p style="font-size:30px; color:var(--light-ink); margin-top:10px">The incomplete status &mdash; from the real message trace, never from the sentence.</p>
+        </div>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">14 / 28</div>
+    </section>
+
+    <section id="s15" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div class="badge-num"><p>3</p></div>
+        <h1 style="font-size:104px; font-weight:700; line-height:1.08">Grilling Discipline</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1300px">One question at a time, enforced in code &mdash; not just written down.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">15 / 28</div>
+    </section>
+
+    <section id="s16" class="slide light">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:44px; flex:1">
+        <div class="kicker">PRINCIPLE</div>
+        <h1 style="font-size:100px; font-weight:600; line-height:1.15; max-width:1650px">One question. A recommended default. No bundling.</h1>
+        <p style="font-size:36px; color:var(--ink-muted); max-width:1300px">If it's a fact discoverable in the filesystem, tools, or DB records &mdash; look it up. Only genuine decisions go to the human.</p>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">16 / 28</div>
+    </section>
+
+    <section id="s17" class="slide light">
+      <div class="kicker">grill.ts</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">The schema rejects the call before the tool ever runs.</h2>
+      <div style="flex:1; display:flex; gap:32px; margin-top:32px">
+        <div class="code-block" style="flex:1; display:flex; align-items:center; justify-content:center">
+          <p style="font-size:26px">recommended: Type.String({<br>&nbsp;&nbsp;description:<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--coral)">"which option you recommend<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; required, not optional"</span><br>})</p>
+        </div>
+        <div style="flex:1; background:var(--paper-card); border-radius:20px; padding:36px 40px; display:flex; flex-direction:column; justify-content:center; gap:16px">
+          <p class="mono" style="font-size:24px; color:var(--ink-muted)">$ omit "recommended" and call grill</p>
+          <p class="mono" style="font-size:26px; color:var(--red); line-height:1.6">Validation failed for tool "grill":<br>&nbsp;&nbsp;- recommended: must have<br>&nbsp;&nbsp;&nbsp;&nbsp;required properties recommended</p>
+        </div>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">It blocks on the human's actual answer, so "one at a time" holds by construction.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">17 / 28</div>
+    </section>
+
+    <section id="s18" class="slide light">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:44px; flex:1">
+        <div class="kicker">PLAN APPROVAL GATE</div>
+        <h1 style="font-size:92px; font-weight:600; line-height:1.18; max-width:1650px">Developer cannot start until approve_plan says so.</h1>
+        <p style="font-size:36px; color:var(--ink-muted); max-width:1350px">Tied to the exact approach.db row id &mdash; a revised plan needs a fresh approval, not a leftover yes.</p>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">18 / 28</div>
+    </section>
+
+    <section id="s19" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div class="badge-num"><p>4</p></div>
+        <h1 style="font-size:104px; font-weight:700; line-height:1.08">Optional by Default</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1300px">Nothing is gated, scoped, or extended until you turn it on.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">19 / 28</div>
+    </section>
+
+    <section id="s20" class="slide light">
+      <div class="kicker">external-sink-gate.ts</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">The preview step is code-enforced, not a prose promise.</h2>
+      <div style="display:flex; gap:32px; flex:1; margin-top:32px">
+        <div class="card" style="flex:1">
+          <div class="card-head" style="background:var(--ink-muted)">BACKGROUND SUBAGENT, NO UI</div>
+          <div class="card-body"><p style="font-size:32px; color:var(--ink)">Write is <b>blocked</b>, always. No dialog-capable UI exists to confirm anything.</p></div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="card-head" style="background:var(--teal)">INTERACTIVE LEAD SESSION</div>
+          <div class="card-body"><p style="font-size:32px; color:var(--ink)">The literal draft is shown, the human confirms, <b>then</b> the write happens.</p></div>
+        </div>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">A rejected write means content was lost on the way in &mdash; resend it, don't trim it to fit.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">20 / 28</div>
+    </section>
+
+    <section id="s21" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:44px; flex:1">
+        <div class="kicker">SECURITY POSTURE</div>
+        <h1 style="font-size:92px; font-weight:600; line-height:1.18; max-width:1650px">Ships permissive by default &mdash; and says so on page one.</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1400px">Every background process inherits your full environment unless you fill in the denylist. Not hidden &mdash; plainly visible in the code, and called out before you install.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">21 / 28</div>
+    </section>
+
+    <section id="s22" class="slide light">
+      <div class="kicker">core-patches.mjs</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">Content-anchored, not file-path-keyed.</h2>
+      <div class="code-block" style="flex:1; margin-top:32px">
+        <p style="font-size:27px">operation.anchor = <span style="color:var(--coral)">"&lt;exact source substring<br>&nbsp;&nbsp;pi ships today&gt;"</span><br><br>apply-patches.mjs searches every<br>dist/**/*.js file for that anchor &mdash;<br>survives pi reshuffling its own<br>build output between versions.</p>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">One canonical file, self-diagnosed in a sandbox. The live install changes only after a human reviews the diff.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">22 / 28</div>
+    </section>
+
+    <section id="s23" class="slide dark">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:36px; flex:1">
+        <div class="badge-num"><p>5</p></div>
+        <h1 style="font-size:104px; font-weight:700; line-height:1.08">A Real Extension</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1300px">Second opinions, without ever touching the verdict.</p>
+      </div>
+      <div class="footer-left" style="color:#5b5f6b">pi-harness</div>
+      <div class="footer-right" style="color:#5b5f6b">23 / 28</div>
+    </section>
+
+    <section id="s24" class="slide light">
+      <div class="kicker">jev-parallel-check.ts</div>
+      <h2 style="font-size:50px; font-weight:600; margin-top:32px">A calibrated classifier, cross-checking the same diff.</h2>
+      <table class="deck-table" style="font-size:30px; margin-top:32px">
+        <tr><th style="width:34%">DIMENSION</th><th style="width:16%">SCORE</th><th style="width:50%">READS AS</th></tr>
+        <tr style="background:#fff"><td class="mono">plan_fidelity</td><td class="mono" style="color:var(--teal); font-weight:600">0.98</td><td>near 1 = diff satisfies the plan</td></tr>
+        <tr style="background:var(--paper-card)"><td class="mono">drift</td><td class="mono" style="color:var(--teal); font-weight:600">0.03</td><td>near 1 = diff deviates from the approach</td></tr>
+        <tr style="background:#fff"><td class="mono">risk_coverage</td><td class="mono" style="color:var(--coral); font-weight:600">0.30</td><td>near 1 = material risk left unaddressed</td></tr>
+      </table>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">A live run, verbatim &mdash; logged alongside Tester's own verdict, never replacing it.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">24 / 28</div>
+    </section>
+
+    <section id="s25" class="slide light">
+      <div style="display:flex; flex-direction:column; justify-content:center; gap:44px; flex:1">
+        <div class="kicker">PRINCIPLE</div>
+        <h1 style="font-size:108px; font-weight:600; line-height:1.1">Independent, not narrated.</h1>
+        <p style="font-size:36px; color:var(--ink-muted); max-width:1400px">Jev never sees Tester's verdict. Tester's verdict is already written before Jev is even asked &mdash; agreement is a real signal, not a circular one.</p>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">25 / 28</div>
+    </section>
+
+    <section id="s26" class="slide light">
+      <div class="kicker">GET STARTED</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">One shot. Then it hands off to pi's own login.</h2>
+      <div style="display:flex; gap:32px; flex:1; margin-top:32px">
+        <div class="code-block" style="flex:1; display:flex; align-items:center">
+          <p style="font-size:32px">git clone &lt;repo&gt; pi-harness<br>cd pi-harness<br><span style="color:var(--coral)">./install.sh</span></p>
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:18px; justify-content:center">
+          <p style="font-size:28px; color:var(--ink-muted)">&rarr; installs or updates pi itself</p>
+          <p style="font-size:28px; color:var(--ink-muted)">&rarr; checks for sqlite3</p>
+          <p style="font-size:28px; color:var(--ink-muted)">&rarr; copies the harness, applies patches</p>
+          <p style="font-size:28px; color:var(--ink-muted)">&rarr; offers to launch pi right there</p>
+        </div>
+      </div>
+      <p style="font-size:26px; color:var(--light-muted); font-weight:500; margin-top:28px">Credentials are the one thing it deliberately doesn't try to automate.</p>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">26 / 28</div>
+    </section>
+
+    <section id="s27" class="slide light">
+      <div class="kicker">RECAP</div>
+      <h2 style="font-size:54px; font-weight:600; margin-top:32px">Five things the harness enforces so you don't have to remember to.</h2>
+      <div style="flex:1; display:flex; flex-direction:column; gap:22px; justify-content:center">
+        <div style="display:flex; gap:28px; align-items:center"><div class="badge-num sm"><p>1</p></div><p style="font-size:32px">The write is truth. The chat message is not.</p></div>
+        <div style="display:flex; gap:28px; align-items:center"><div class="badge-num sm"><p>2</p></div><p style="font-size:32px">Grilling is one question at a time &mdash; code-enforced, not just written down.</p></div>
+        <div style="display:flex; gap:28px; align-items:center"><div class="badge-num sm"><p>3</p></div><p style="font-size:32px">Developer waits for a real approval, tied to the exact plan revision.</p></div>
+        <div style="display:flex; gap:28px; align-items:center"><div class="badge-num sm"><p>4</p></div><p style="font-size:32px">Nothing is gated, scoped, or extended until you turn it on.</p></div>
+        <div style="display:flex; gap:28px; align-items:center"><div class="badge-num sm"><p>5</p></div><p style="font-size:32px">A second opinion can be independent without ever being authoritative.</p></div>
+      </div>
+      <div class="footer-left" style="color:var(--light-muted)">pi-harness</div>
+      <div class="footer-right" style="color:var(--light-muted)">27 / 28</div>
+    </section>
+
+    <section id="s28" class="slide dark">
+      <div style="display:flex; flex-direction:column; gap:32px; max-width:1500px">
+        <div class="kicker lg">FORK IT</div>
+        <h1 style="font-size:116px; font-weight:700; line-height:1.08">pi-harness</h1>
+        <p style="font-size:36px; color:var(--light-muted); max-width:1300px">github.com/JayMandava/jay-pi &mdash; MIT licensed. AGENTS.md, three role prompts, a handful of extensions. Nothing more to run.</p>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <p style="font-size:22px; color:#5b5f6b; font-weight:500">Built on pi (earendil-works) &middot; ponytail (DietrichGebert) &middot; grill-me (mattpocock)</p>
+        <p style="font-size:22px; color:#5b5f6b; font-weight:500">Orphaned status from OpenExecutive &middot; mutation guard from HarnessEngineeringWorkshop &middot; Jev from TypeSafe</p>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div id="controls">
+  <button id="prev" aria-label="Previous slide">&larr;</button>
+  <span id="counter">1 / 28</span>
+  <button id="next" aria-label="Next slide">&rarr;</button>
+</div>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var counter = document.getElementById('counter');
+  var stage = document.getElementById('stage');
+  var current = 0;
+
+  function show(i) {
+    if (i < 0 || i >= slides.length) return;
+    slides[current].classList.remove('active');
+    current = i;
+    slides[current].classList.add('active');
+    counter.textContent = (current + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + slides[current].id);
+  }
+
+  function scaleStage() {
+    var scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    stage.style.transform = 'scale(' + scale + ')';
+  }
+
+  document.getElementById('prev').addEventListener('click', function () { show(current - 1); });
+  document.getElementById('next').addEventListener('click', function () { show(current + 1); });
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { show(current + 1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { show(current - 1); e.preventDefault(); }
+  });
+
+  window.addEventListener('resize', scaleStage);
+
+  var startIndex = slides.findIndex(function (s) { return '#' + s.id === location.hash; });
+  scaleStage();
+  show(startIndex >= 0 ? startIndex : 0);
+})();
+</script>
+</body>
+</html>

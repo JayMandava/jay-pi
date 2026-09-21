@@ -35,16 +35,17 @@ your own `~/.pi/agent/` directory.
 ```mermaid
 flowchart TB
     H["Human"] --> L["Lead\n(orchestrates + final review)"]
-    L --> P["Planner\napproach.db"]
-    L --> D["Developer\nimplementation.db"]
-    L --> T["Tester\nfeedback.db"]
-    L --> R["review.db"]
+    L --> P["Planner\nplans the work"]
+    L --> D["Developer\nbuilds it"]
+    L --> T["Tester\nchecks it"]
 ```
 
 In order: Planner plans, Developer implements (only after `approve_plan`
-has fired), Tester checks, Lead reviews the whole cycle into `review.db`.
-Each role hands its result back to Lead automatically ("auto-handoff") the
-moment it finishes — Lead never polls for it.
+has fired), Tester checks, Lead reviews the whole cycle. Each role hands
+its result back to Lead automatically ("auto-handoff") the moment it
+finishes — Lead never polls for it. Each role also has exactly one DB it
+writes to and one external-sink section it offers — see the table below,
+not this diagram, for that mapping.
 
 Each role is a separate top-level `pi` (or `claude`) process, not a nested
 sub-agent call — a dropped stream in one never takes the rest down. Every
@@ -142,6 +143,11 @@ flowchart LR
   OpenAI-compatible reasoning model (e.g. a vLLM-served Qwen3 deployment)
   into pi, including a real gotcha around where the "enable thinking" flag
   actually needs to live in the request body.
+- **`deck/`** — a 28-slide "Harness Engineering" deck walking through this
+  repo's actual design (payload-vs-narration, the five run statuses,
+  Grilling Discipline, the Plan Approval Gate, the Jev cross-check as a
+  worked extension example). Self-contained: open `deck/index.html` in a
+  browser, no build step.
 
 ## Why the structured DB writes and the non-`completed` run statuses
 
