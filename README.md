@@ -227,13 +227,17 @@ build it out into a real allowlist) before you rely on background runs.
   — a different kind of multi-agent system, but its scheduler has a
   boot-time sweep for exactly this class of bug (a run stuck mid-flight
   after a crash).
-- `grill.ts` (the code-enforced Grilling Discipline tool), `plan-approval.ts`
-  (the Developer mutation guard), and the `data/history.jsonl` audit ledger
-  were all borrowed from a comparison against
+- `grill.ts`'s pattern (interview one question at a time until reaching
+  shared understanding, no bundling) is [Matt Pocock](https://github.com/mattpocock)'s
+  [`grill-me` skill](https://github.com/mattpocock/skills/blob/main/skills/productivity/grill-me/SKILL.md)
+  from [mattpocock/skills](https://github.com/mattpocock/skills) — this
+  harness's own Grilling Discipline predates it, but `grill.ts` specifically
+  was written after seeing that skill code-shaped the same idea.
+- `plan-approval.ts` (the Developer mutation guard) and the
+  `data/history.jsonl` audit ledger were borrowed from a comparison against
   [CraftsMan-Labs/HarnessEngineeringWorkshop](https://github.com/CraftsMan-Labs/HarnessEngineeringWorkshop)'s
-  `dsh-software-factory` plugin — specifically its "Grill Me" one-question-
-  at-a-time pattern, its ticket-state mutation guard, and its flat
-  append-only `history.jsonl` ledger.
+  `dsh-software-factory` plugin — specifically its ticket-state mutation
+  guard and its flat append-only `history.jsonl` ledger.
 - `extensions/jev-parallel-check.ts` integrates [Jev](https://typesafe.ai)
   by [TypeSafe](https://console.typesafe.ai) — a calibrated Choice/Score/
   Noul classifier used here as an optional, independent second opinion on
