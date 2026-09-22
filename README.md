@@ -2,8 +2,8 @@
 
 # pi-harness
 
-**Harness engineering for [pi](https://github.com/earendil-works/pi-coding-agent).**
-The harness decides whether a strong model actually finishes the job.
+**A process-engineering layer for agentic development, built on [pi](https://github.com/earendil-works/pi-coding-agent).**
+The harness is just what makes the gates unbypassable.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-111111?style=flat-square)](LICENSE)
 [![Built for pi](https://img.shields.io/badge/built%20for-pi-111111?style=flat-square)](https://github.com/earendil-works/pi-coding-agent)
@@ -23,6 +23,11 @@ optional, gated write-back to whatever external tracker you use.
 This isn't a pi fork or plugin — it's an `AGENTS.md` operating contract plus a
 handful of pi extensions and agent-role prompt files that you install into
 your own `~/.pi/agent/` directory.
+
+The process — plan, approve, implement, verify, review — is the actual
+product. Swap the model, or swap pi for another agent entirely, and the
+same gates, the same verification, the same audit trail still hold; the
+harness underneath is just what makes each one impossible to skip.
 
 **Jump to:** [How it fits together](#how-it-fits-together) ·
 [What's in here](#whats-in-here) ·
