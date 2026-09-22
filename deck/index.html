@@ -28,13 +28,21 @@
     font-family: 'Rubik', sans-serif; height: 100%;
   }
   #viewport {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    display: flex; align-items: center; justify-content: center;
   }
   #stage {
-    width: 1920px; height: 1080px; position: relative; transform-origin: center center;
+    width: 1920px; height: 1080px; position: relative; flex: none;
+    transform-origin: center center;
+    /* Pure-CSS responsive scaling — no JS dependency, so it can't silently
+       fail to apply if a script is blocked or errors before it runs. Divides
+       two lengths (a vw-based length by a px length) to get a unitless
+       scale factor, then takes the smaller of width-fit / height-fit so the
+       1920x1080 canvas always fits inside the viewport without cropping. */
+    transform: scale(min(100vw / 1920, 100vh / 1080));
   }
   .slide {
-    position: absolute; inset: 0; width: 1920px; height: 1080px;
+    position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 1920px; height: 1080px;
     padding: 128px 128px 160px; display: none; flex-direction: column;
     box-sizing: border-box;
   }
@@ -90,14 +98,24 @@
   }
   #controls button:hover { background: #262b38; }
   @media print {
+    /* Make the printed PAGE exactly match the 1920x1080 design canvas
+       instead of squeezing that canvas into a physical mm page size — every
+       font-size/padding value in the slides is a raw px number tuned for
+       1920x1080, so resizing the box to e.g. 297mm x 167mm (a totally
+       different aspect/scale) was what broke the printed/PDF output:
+       headlines overflowed, footers landed in the wrong place, cards
+       overlapped. At 1:1 px-to-page-unit, nothing needs to reflow. */
+    @page { size: 1920px 1080px; margin: 0; }
     body { background: #fff; overflow: visible; }
     #controls { display: none; }
     #viewport { position: static; display: block; }
-    #stage { transform: none !important; width: auto; height: auto; }
+    #stage { transform: none !important; position: static; width: 1920px; height: auto; }
     .slide {
-      position: static; display: flex !important; width: 297mm; height: 167mm;
-      page-break-after: always;
+      position: relative; top: auto; right: auto; bottom: auto; left: auto;
+      display: flex !important; width: 1920px; height: 1080px;
+      page-break-after: always; break-after: page;
     }
+    .slide:last-of-type { page-break-after: auto; break-after: auto; }
   }
 </style>
 </head>
@@ -477,7 +495,6 @@
 (function () {
   var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
   var counter = document.getElementById('counter');
-  var stage = document.getElementById('stage');
   var current = 0;
 
   function show(i) {
@@ -486,12 +503,12 @@
     current = i;
     slides[current].classList.add('active');
     counter.textContent = (current + 1) + ' / ' + slides.length;
-    history.replaceState(null, '', '#' + slides[current].id);
-  }
-
-  function scaleStage() {
-    var scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-    stage.style.transform = 'scale(' + scale + ')';
+    // history.replaceState can throw a SecurityError on some browsers when
+    // the page is opened directly as a file:// URL — never let that take
+    // down slide switching, which already fully succeeded above.
+    try {
+      history.replaceState(null, '', '#' + slides[current].id);
+    } catch (err) {}
   }
 
   document.getElementById('prev').addEventListener('click', function () { show(current - 1); });
@@ -502,10 +519,10 @@
     if (e.key === 'ArrowLeft' || e.key === 'PageUp') { show(current - 1); e.preventDefault(); }
   });
 
-  window.addEventListener('resize', scaleStage);
-
+  // Scaling itself is pure CSS now (see #stage's transform: scale(min(...)))
+  // so it can't silently fail to apply if this script is blocked or throws
+  // before it runs — this only handles which slide is showing.
   var startIndex = slides.findIndex(function (s) { return '#' + s.id === location.hash; });
-  scaleStage();
   show(startIndex >= 0 ? startIndex : 0);
 })();
 </script>
