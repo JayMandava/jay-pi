@@ -130,8 +130,6 @@ flowchart LR
   - `agents-md-freshness.ts` — warns if a resumed/forked session's context
     predates the current `AGENTS.md`, so a stale operating contract doesn't
     silently keep running.
-  - `lead-idle-timeout.ts` — aborts a run that's made no forward progress
-    for a configurable window, instead of burning tokens stuck in a loop.
   - `tokens-per-second.ts` — a small footer stat.
   - `jev-parallel-check.ts` — an optional second opinion on Tester's verdict
     from [TypeSafe's Jev](https://typesafe.ai), a calibrated classifier
