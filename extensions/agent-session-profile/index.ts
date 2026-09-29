@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
 
 import { discoverAgents } from "./agent-discovery.ts";
+import { buildClaudeModelOptions, queryClaudeCliModels } from "./claude-models.ts";
 import {
   clearAgentSessionProfile,
   clearGlobalAgentSessionProfile,
@@ -23,7 +24,7 @@ import {
 const ROLE_ORDER = ["planner", "developer", "tester"] as const;
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const CLAUDE_PRESET_MODELS = [
-  "claude-sonnet-5",
+  "claude-sonnet-5-5",
   "claude-opus-4-8",
   "claude-haiku-4-5-20251001",
 ] as const;
@@ -142,11 +143,15 @@ async function getScopedModelRefs(ctx: ExtensionContext): Promise<string[]> {
 
 async function chooseClaudeModel(ctx: ExtensionContext, initialValue: string): Promise<string | null> {
   const selectedModel = initialValue || CLAUDE_DEFAULT_MODEL;
-  const options = [
-    ...CLAUDE_PRESET_MODELS.map((model) => model === selectedModel ? `${model} (current)` : model),
-    "Enter model manually",
-  ];
-  const choice = await ctx.ui.select("Claude CLI model", options);
+  // The list comes from the installed claude CLI itself, so a new model shows up without a code
+  // edit; the hard-coded presets are only the fallback when the CLI can't be asked.
+  const cliModels = await queryClaudeCliModels();
+  const rows = buildClaudeModelOptions(cliModels, CLAUDE_PRESET_MODELS, selectedModel);
+  const options = [...rows.map((row) => row.label), "Enter model manually"];
+  const choice = await ctx.ui.select(
+    cliModels ? "Claude CLI model" : "Claude CLI model (built-in list — couldn't reach claude)",
+    options,
+  );
   if (!choice) {
     return null;
   }
@@ -155,7 +160,7 @@ async function chooseClaudeModel(ctx: ExtensionContext, initialValue: string): P
     const trimmed = selected?.trim();
     return trimmed || null;
   }
-  return choice.replace(/ \(current\)$/, "");
+  return rows.find((row) => row.label === choice)?.id ?? choice.replace(/ \(current\)$/, "");
 }
 
 async function resolvePiModelChoice(ctx: ExtensionContext, choice: string, preferred: string | undefined): Promise<string | null> {
