@@ -29,14 +29,16 @@ function ensureApprovalsTable(dbPath: string): void {
 		approach_row_id INTEGER NOT NULL,
 		approved_at TEXT NOT NULL
 	);`;
-	execFileSync("sqlite3", [dbPath, sql]);
+	// stdio is explicit on every sqlite3 call in this file: execFileSync inherits the child's stderr
+	// by default, which writes straight to the terminal and corrupts pi's TUI (e.g. "no such table").
+	execFileSync("sqlite3", [dbPath, sql], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function getLatestApproachRowId(cwd: string): number | null {
 	const dbPath = path.join(cwd, "data", "approach.db");
 	if (!fs.existsSync(dbPath)) return null;
 	try {
-		const out = execFileSync("sqlite3", [dbPath, "SELECT id FROM cycles ORDER BY id DESC LIMIT 1;"]).toString().trim();
+		const out = execFileSync("sqlite3", [dbPath, "SELECT id FROM cycles ORDER BY id DESC LIMIT 1;"], { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 		return out ? Number(out) : null;
 	} catch {
 		return null;
@@ -49,7 +51,9 @@ export function isApproachRowApproved(cwd: string, approachRowId: number): boole
 	const dbPath = getApprovalsDbPath(cwd);
 	if (!fs.existsSync(dbPath)) return false;
 	try {
-		const out = execFileSync("sqlite3", [dbPath, `SELECT 1 FROM approvals WHERE approach_row_id = ${approachRowId} LIMIT 1;`])
+		const out = execFileSync("sqlite3", [dbPath, `SELECT 1 FROM approvals WHERE approach_row_id = ${approachRowId} LIMIT 1;`], {
+			stdio: ["ignore", "pipe", "pipe"],
+		})
 			.toString()
 			.trim();
 		return out === "1";
@@ -94,10 +98,11 @@ export default function planApproval(pi: ExtensionAPI) {
 			fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 			ensureApprovalsTable(dbPath);
 			const approvedAt = new Date().toISOString();
-			execFileSync("sqlite3", [
-				dbPath,
-				`INSERT INTO approvals (approach_row_id, approved_at) VALUES (${rowId}, '${approvedAt}');`,
-			]);
+			execFileSync(
+				"sqlite3",
+				[dbPath, `INSERT INTO approvals (approach_row_id, approved_at) VALUES (${rowId}, '${approvedAt}');`],
+				{ stdio: ["ignore", "pipe", "pipe"] },
+			);
 
 			appendHistoryEvent(ctx.cwd, { event: "plan_approved", approachRowId: rowId, approvedAt });
 

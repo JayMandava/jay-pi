@@ -191,6 +191,21 @@ function ensureRunsDir(cwd: string): string {
   return dir;
 }
 
+// One line in a log file instead of console.error: this runs after the session that launched the
+// run was replaced, so there's no live UI to tell, and a stderr write (with a stack trace) lands in
+// the middle of the lead's TUI. Must never throw — the run's real outcome is already on disk.
+function logHandoffFailure(cwd: string, runId: string, error: unknown): void {
+  try {
+    const detail = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim().slice(0, 300);
+    fs.appendFileSync(
+      path.join(ensureRunsDir(cwd), "handoff-errors.log"),
+      `${new Date().toISOString()} ${runId} handoff notification failed (session likely replaced): ${detail}\n`,
+    );
+  } catch {
+    // best-effort only
+  }
+}
+
 function getArtifactPath(cwd: string, runId: string): string {
   return path.join(ensureRunsDir(cwd), `${runId}.json`);
 }
@@ -859,7 +874,7 @@ async function startRun(
         // letting an unhandled rejection crash the whole pi process — a
         // background subagent finishing should never be able to take down
         // an unrelated, already-moved-on session.
-        console.error(`[lifecycle-subagent] handoff notification for ${record.runId} failed (session likely replaced):`, error);
+        logHandoffFailure(cwd, record.runId, error);
       } finally {
         activeRuns.delete(record.runId);
       }

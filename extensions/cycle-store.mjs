@@ -52,7 +52,9 @@ function ensureTable(dbPath) {
 		payload TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	);`;
-	execFileSync("sqlite3", [dbPath, sql]);
+	// stdio is explicit on every sqlite3 call here: execFileSync inherits the child's stderr by
+	// default, which writes straight to the terminal and corrupts pi's TUI when this runs in-process.
+	execFileSync("sqlite3", [dbPath, sql], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /**
@@ -94,7 +96,7 @@ export function writeCycleRecord({ cwd, stage, summary, data, cycleId }) {
 	// last_insert_rowid() is scoped to the connection that did the insert — a
 	// separate `sqlite3` invocation opens a new connection and always reports
 	// 0. Run both statements in one invocation so they share a connection.
-	const rowId = execFileSync("sqlite3", [dbPath, `${insertSql}\nSELECT last_insert_rowid();`]).toString().trim();
+	const rowId = execFileSync("sqlite3", [dbPath, `${insertSql}\nSELECT last_insert_rowid();`], { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 	const result = {
 		ok: true,

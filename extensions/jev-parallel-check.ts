@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { ExtensionAPI, TextContent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, TextContent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 // Optional sideline check: after Tester writes its "feedback" record_cycle
 // row, ask TypeSafe's Jev (https://typesafe.ai — a calibrated Choice/Score/
@@ -34,6 +34,27 @@ type JevMatrix = {
 	raw: unknown;
 };
 
+type Report = (message: string, error?: unknown) => void;
+
+// Reports a failed optional check without writing to stderr: in the TUI, pi owns the terminal,
+// so a console.error (often a multi-line stack trace) lands wherever the cursor is — typically
+// over the footer. With a UI it becomes one short line through pi's own notifier; with no UI
+// (background/non-interactive runs) stderr is still the right place, so that path is unchanged.
+function makeReporter(ctx: ExtensionContext): Report {
+	return (message, error) => {
+		const detail = error === undefined ? "" : error instanceof Error ? error.message : String(error);
+		const oneLine = detail.replace(/\s+/g, " ").trim().slice(0, 300);
+		const line = `[jev-parallel-check] ${message}${oneLine ? `: ${oneLine}` : ""}`;
+		if (ctx.hasUI) {
+			ctx.ui.notify(line, "warning");
+		} else if (error === undefined) {
+			console.error(line);
+		} else {
+			console.error(line, error);
+		}
+	};
+}
+
 // Checks process.env first (the normal way to configure a secret for any
 // CLI), then falls back to a `JEV_API_KEY=...` line in ~/.pi/.env for anyone
 // who keeps secrets there instead of exporting them — either is fine, this
@@ -55,11 +76,14 @@ function readJevApiKey(): string | null {
 	return null;
 }
 
+// stdio is explicit on every child process in this file: execFileSync inherits the child's
+// stderr by default, which writes straight to the terminal and corrupts pi's TUI (git's usage
+// text outside a repo, sqlite's "no such table"). Piping it keeps the error on the thrown Error.
 function getGitDiff(cwd: string): string {
 	try {
-		const unstaged = execFileSync("git", ["diff", "HEAD"], { cwd, maxBuffer: 10 * 1024 * 1024 }).toString();
+		const unstaged = execFileSync("git", ["diff", "HEAD"], { cwd, maxBuffer: 10 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).toString();
 		if (unstaged.trim()) return unstaged;
-		return execFileSync("git", ["diff"], { cwd, maxBuffer: 10 * 1024 * 1024 }).toString();
+		return execFileSync("git", ["diff"], { cwd, maxBuffer: 10 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).toString();
 	} catch {
 		return ""; // not a git repo, or no changes — Jev still gets asked, just without a diff
 	}
@@ -72,7 +96,7 @@ function getLatestApproachSummary(cwd: string, cycleId: string | null): string {
 		const query = cycleId
 			? `SELECT summary FROM cycles WHERE cycle_id = '${cycleId.replace(/'/g, "''")}' ORDER BY id DESC LIMIT 1;`
 			: `SELECT summary FROM cycles ORDER BY id DESC LIMIT 1;`;
-		return execFileSync("sqlite3", [dbPath, query]).toString().trim();
+		return execFileSync("sqlite3", [dbPath, query], { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 	} catch {
 		return "";
 	}
@@ -95,7 +119,7 @@ function ensureLogTable(dbPath: string): void {
 		jev_raw TEXT,
 		created_at TEXT NOT NULL
 	);`;
-	execFileSync("sqlite3", [dbPath, sql]);
+	execFileSync("sqlite3", [dbPath, sql], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function logResult(
@@ -120,7 +144,7 @@ function logResult(
 	)}, ${num(row.matrix.drift)}, ${num(row.matrix.risk_coverage)}, ${quoteSql(JSON.stringify(row.matrix.raw ?? null))}, ${quoteSql(
 		new Date().toISOString(),
 	)});`;
-	execFileSync("sqlite3", [dbPath, sql]);
+	execFileSync("sqlite3", [dbPath, sql], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function formatMatrixTable(matrix: JevMatrix): string {
@@ -134,7 +158,7 @@ function formatMatrixTable(matrix: JevMatrix): string {
 	].join("\n");
 }
 
-async function queryJevMatrix(cwd: string, cycleId: string | null): Promise<JevMatrix | null> {
+async function queryJevMatrix(cwd: string, cycleId: string | null, report: Report): Promise<JevMatrix | null> {
 	const apiKey = readJevApiKey();
 	if (!apiKey) return null; // not configured — silently skip, this is opt-in, not a hard dependency
 
@@ -186,12 +210,13 @@ async function queryJevMatrix(cwd: string, cycleId: string | null): Promise<JevM
 			}),
 		});
 	} catch (error) {
-		console.error("[jev-parallel-check] request failed or timed out:", error);
+		report("request failed or timed out", error);
 		return null;
 	}
 
 	if (!response.ok) {
-		console.error(`[jev-parallel-check] API call failed: ${response.status} ${await response.text().catch(() => "")}`);
+		const body = (await response.text().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 200);
+		report(`API call failed: ${response.status}${body ? ` ${body}` : ""}`);
 		return null;
 	}
 
@@ -217,8 +242,9 @@ export default function jevParallelCheck(pi: ExtensionAPI) {
 		const testerRowId = (details?.rowId as number | undefined) ?? -1;
 		const testerSummary = (input.summary as string | undefined) ?? "";
 
-		const matrix = await queryJevMatrix(ctx.cwd, cycleId).catch((error) => {
-			console.error("[jev-parallel-check] unexpected failure:", error);
+		const report = makeReporter(ctx);
+		const matrix = await queryJevMatrix(ctx.cwd, cycleId, report).catch((error) => {
+			report("unexpected failure", error);
 			return null;
 		});
 		if (!matrix) return {}; // not configured, or the call failed/timed out — leave the tool result untouched
@@ -226,7 +252,7 @@ export default function jevParallelCheck(pi: ExtensionAPI) {
 		try {
 			logResult(ctx.cwd, { cycleId, testerRowId, testerSummary, testerData: input.data, matrix });
 		} catch (error) {
-			console.error("[jev-parallel-check] failed to log result:", error);
+			report("failed to log result", error);
 		}
 
 		const matrixBlock: TextContent = { type: "text", text: formatMatrixTable(matrix) };
