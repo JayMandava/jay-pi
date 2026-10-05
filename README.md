@@ -131,6 +131,12 @@ flowchart LR
     predates the current `AGENTS.md`, so a stale operating contract doesn't
     silently keep running.
   - `tokens-per-second.ts` — a small footer stat.
+  - `tui-console-guard.ts` — keeps raw `console.log/warn/error` output from
+    other packages off the screen while the TUI is up (pi only intercepts
+    console output in non-interactive modes, so a package that prints an OAuth
+    URL or a connect error lands under the editor bar and never gets repainted).
+    Output goes to `~/.pi/agent/logs/console.log`; login URLs still show as a
+    normal notification and error bursts collapse into one summary notice.
   - `jev-parallel-check.ts` — an optional second opinion on Tester's verdict
     from [TypeSafe's Jev](https://typesafe.ai), a calibrated classifier
     rather than a chat model. Fully inert until you set `JEV_API_KEY` — see
