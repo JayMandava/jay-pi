@@ -3,9 +3,9 @@ import * as path from "node:path";
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
 
 import { discoverAgents } from "./agent-discovery.ts";
+import { scopedModelRefs } from "./model-patterns.mjs";
 import { buildClaudeModelOptions, queryClaudeCliModels } from "./claude-models.ts";
 import {
   clearAgentSessionProfile,
@@ -133,12 +133,7 @@ async function getScopedModelRefs(ctx: ExtensionContext): Promise<string[]> {
   if (patterns.length === 0) {
     return [];
   }
-  const { scopedModels } = await resolveModelScopeWithDiagnostics(patterns, ctx.modelRegistry);
-  const refs = new Set<string>();
-  for (const { model } of scopedModels) {
-    refs.add(`${(model as Model<Api> & { provider?: string }).provider}/${model.id}`);
-  }
-  return Array.from(refs).sort((left, right) => left.localeCompare(right));
+  return scopedModelRefs(patterns, ctx.modelRegistry.getAvailable());
 }
 
 async function chooseClaudeModel(ctx: ExtensionContext, initialValue: string): Promise<string | null> {
@@ -243,6 +238,7 @@ async function configureRole(
       ? [`Keep current (${currentRunner} | ${currentModel}${currentThinking ? ` | thinking:${currentThinking}` : ""})`]
       : []),
     `Use agent default (${defaults.runner || "pi"} | ${defaults.model || "default"}${defaults.thinking ? ` | thinking:${defaults.thinking}` : ""})`,
+    `Codex CLI (${currentRunner === "codex-cli" ? currentModel : "configured CLI default"})`,
     `Claude CLI (${currentRunner === "claude-cli" ? currentModel : CLAUDE_DEFAULT_MODEL})`,
     `PI model (${currentRunner === "pi" ? currentModel : recommendedPiModel || "choose model"}${recommendedThinking ? ` | thinking:${recommendedThinking}` : ""})`,
   ]);
@@ -268,6 +264,12 @@ async function configureRole(
       runner: "claude-cli",
       model,
     };
+  }
+
+  if (mode.startsWith("Codex CLI")) {
+    const model = await ctx.ui.input("Codex model (blank uses your CLI default)", currentRunner === "codex-cli" ? current.model || "" : "");
+    if (model === undefined) return null;
+    return { runner: "codex-cli", ...(model.trim() ? { model: model.trim() } : {}) };
   }
 
   const model = await choosePiModel(ctx, currentRunner === "pi" ? currentModel : recommendedPiModel);

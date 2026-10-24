@@ -38,13 +38,13 @@ export default function grill(pi: ExtensionAPI) {
 			if (!ctx.hasUI) {
 				return {
 					content: [{ type: "text", text: "grill requires an interactive session with UI — this cannot run from a background subagent." }],
-					isError: true,
+					isError: true, details: {},
 				};
 			}
 			if (!params.options.includes(params.recommended)) {
 				return {
 					content: [{ type: "text", text: `recommended ("${params.recommended}") must be one of options: ${params.options.join(", ")}.` }],
-					isError: true,
+					isError: true, details: {},
 				};
 			}
 
@@ -62,7 +62,7 @@ export default function grill(pi: ExtensionAPI) {
 			});
 
 			if (resolvedAnswer === null) {
-				return { content: [{ type: "text", text: "Human dismissed the question without answering." }], isError: true };
+				return { content: [{ type: "text", text: "Human dismissed the question without answering." }], isError: true, details: {} };
 			}
 			return { content: [{ type: "text", text: `Human answered: ${resolvedAnswer}` }], details: { question: params.question, answer: resolvedAnswer } };
 		},

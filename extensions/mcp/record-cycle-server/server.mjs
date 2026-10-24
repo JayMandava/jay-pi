@@ -80,10 +80,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		}
 
 		return {
+			structuredContent: result,
 			content: [
 				{
 					type: "text",
-					text: `Recorded ${result.stage} cycle row ${result.rowId} in ${result.dbPath}${result.cycleId ? ` (cycle ${result.cycleId})` : ""}.`,
+					text: JSON.stringify(result),
 				},
 			],
 		};

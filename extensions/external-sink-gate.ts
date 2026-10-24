@@ -22,33 +22,42 @@ interface GatedSink {
 	tools: string[];
 }
 
-const CONFIG_PATH = process.env.PI_EXTERNAL_SINK_CONFIG ?? path.join(os.homedir(), ".pi", "agent", "external-sink.json");
 const MAX_PREVIEW_CHARS = 4000;
 
-function loadGatedTools(): Map<string, string> {
-	const byTool = new Map<string, string>();
-	let raw: string;
-	try {
-		raw = fs.readFileSync(CONFIG_PATH, "utf8");
-	} catch {
-		return byTool; // no config file present = nothing gated
-	}
-
-	let sinks: GatedSink[];
-	try {
-		sinks = JSON.parse(raw);
-	} catch {
-		return byTool;
-	}
-	if (!Array.isArray(sinks)) return byTool;
-
-	for (const sink of sinks) {
-		if (!sink?.label || !Array.isArray(sink.tools)) continue;
-		for (const tool of sink.tools) {
-			if (typeof tool === "string") byTool.set(tool, sink.label);
-		}
-	}
-	return byTool;
+// Missing default configuration is opt-out. An explicitly configured missing
+// path, unreadable file, or malformed policy is an error, not an opt-out.
+// Without a valid policy we cannot identify writes, so the hook blocks ALL
+// tool calls until the operator repairs/removes the policy outside the agent.
+export function loadGatedTools(
+  configPath = process.env.PI_EXTERNAL_SINK_CONFIG ?? path.join(os.homedir(), ".pi", "agent", "external-sink.json"),
+  explicitlyConfigured = process.env.PI_EXTERNAL_SINK_CONFIG !== undefined,
+): Map<string, string> {
+  const byTool = new Map<string, string>();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" && !explicitlyConfigured) return byTool;
+    throw new Error("External-sink policy is unavailable. Repair the configured file before using tools.");
+  }
+  let sinks: GatedSink[];
+  try {
+    sinks = JSON.parse(raw);
+  } catch {
+    throw new Error("External-sink policy is invalid JSON. Repair it before using tools.");
+  }
+  if (!Array.isArray(sinks)) throw new Error("External-sink policy must be an array of sinks.");
+  for (const sink of sinks) {
+    if (!sink || typeof sink.label !== "string" || !sink.label.trim() || !Array.isArray(sink.tools)
+      || sink.tools.some((tool) => typeof tool !== "string" || !tool.trim())) {
+      throw new Error("External-sink policy has an invalid sink. Each sink needs a label and an array of nonempty tool names.");
+    }
+    for (const tool of sink.tools) {
+      if (byTool.has(tool)) throw new Error("External-sink policy contains a duplicate tool name.");
+      byTool.set(tool, sink.label);
+    }
+  }
+  return byTool;
 }
 
 // Truncating the preview and still letting the human approve it would mean
@@ -64,7 +73,12 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx): Promise<ToolCallEventResult> => {
 		// Read fresh on every call rather than caching at startup, so editing
 		// the config file takes effect without restarting the session.
-		const gatedTools = loadGatedTools();
+		let gatedTools: Map<string, string>;
+		try {
+			gatedTools = loadGatedTools();
+		} catch (error) {
+			return { block: true, reason: (error as Error).message };
+		}
 		const label = gatedTools.get(event.toolName);
 		if (!label) return {};
 
