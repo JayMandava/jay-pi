@@ -56,10 +56,14 @@ try:
                 os.write(master, (request["answer"] + "\n").encode())
         if process.poll() is not None and not ready:
             break
-    if process.poll() is None:
+    # PTY EOF/EIO means terminal descriptors closed, not necessarily that the
+    # child has exited. Reap against the original deadline, not this read event.
+    try:
+        process.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
         timed_out = True
         os.killpg(process.pid, signal.SIGKILL)
-    process.wait(timeout=2)
+        process.wait(timeout=2)
 finally:
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGKILL)

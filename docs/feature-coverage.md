@@ -7,7 +7,7 @@ interaction. Run `npm test` and `npm run check` against the final checkout; see
 [functional testing](functional-testing.md) for fixture mechanics.
 
 Independent final run for `HARNESS-FEATURE-QA-R1` (24 October 2026, Linux,
-Node 24): **151 tests passed, zero failures/skips**, plus syntax and TypeScript
+Node 24): **152 tests passed, zero failures/skips**, plus syntax and TypeScript
 checks and `git diff --check`. This includes real local PTY transport, not a
 live human or authenticated vendor session.
 
@@ -60,6 +60,7 @@ not merely code that happens to run.
 | Shipped feature | Current evidence | Level and remaining gap |
 |---|---|---|
 | CLI help and offline doctor | `cli.test.mjs`: “help and doctor are offline and usable” | Actual CLI subprocess |
+| PTY driver process-exit reliability | `cli-e2e.test.mjs`: delayed exit after terminal descriptors close retains true exit status | Actual Python stdlib PTY; regression for CI EOF-before-exit race |
 | CLI argument rejection | `cli.test.mjs`: unknown/incomplete options and invalid timeout | Actual CLI subprocess; not an exhaustive parser matrix |
 | CLI exact-phrase approval and refusal | `cli.test.mjs`: piped input refusal; `cli-e2e.test.mjs`: actual PTY approval, decline/wrong phrase/interruption, JSON, stale row and revision-during-prompt refusal | Actual CLI/PTY with synthetic keystrokes, not human consent |
 | CLI nine-scenario demo | `cli.test.mjs`: persisted lifecycle/failure outcomes | Actual CLI + mock provider; synthetic approval |

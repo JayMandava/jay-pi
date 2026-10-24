@@ -283,3 +283,20 @@ test('CLI E2E: timeout validation matches shared-engine lower bound', POSIX, t =
   assert.equal(record.status, 'failed');
   assert.match(record.statusReason, /Timed out after 10 ms/);
 });
+
+// Reproduce Linux PTY EIO before waitpid can observe the child exit. The
+// deliberately delayed exit must retain its real status rather than SIGKILL.
+test('CLI PTY driver waits for child exit after terminal descriptors close', TTY, t => {
+  const f = createProviderWorkspace(t, 'pi');
+  const child = 'import os,time; os.write(1,b"terminal closed\\n"); [os.close(fd) for fd in (0,1,2)]; time.sleep(0.25); os._exit(7)';
+  const result = spawnSync(PYTHON, [TTY_DRIVER], {
+    cwd: f.cwd, env: process.env, encoding: 'utf8', timeout: 12000,
+    input: JSON.stringify({ command: [PYTHON, '-c', child], cwd: f.cwd }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.match(report.transcript, /terminal closed/);
+  assert.equal(report.timedOut, false);
+  assert.equal(report.returncode, 7);
+  assert.equal(report.answered, false);
+});
