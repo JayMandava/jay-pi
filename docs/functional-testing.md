@@ -44,6 +44,12 @@ The old `mock` adapter remains useful for small deterministic engine tests and t
 
 An independent review found that inherited object keys such as `constructor` were accepted as provider IDs and could silently route to Codex. The runtime, invocation builder and normalizer now require an own, string-valued registry key. Omitted runner still defaults to pi; invalid explicit values are rejected rather than silently substituted.
 
+## Feature-oriented end-to-end pass
+
+The [feature coverage matrix](feature-coverage.md) maps the shipped surfaces to specific tests and explicitly lists remaining gaps. `tests/cli-e2e.test.mjs` drives the actual CLI, including real POSIX terminal approval with automated keystrokes using Python 3 standard-library `pty`; this is not evidence of human consent. It skips that terminal coverage when Python/PTY is unavailable rather than substituting piped input. Linux CI exercises it without skips.
+
+`tests/pi-frontend-e2e.test.mjs` exercises the real TypeScript extension callbacks and shared engine with fake UI/provider hosts, including actual saved-run-to-status-ticker integration. `tests/legacy-extensions.test.mjs` exercises documented legacy behaviors in isolated hosts and disposable patch fixtures, never the user’s global pi installation. Real terminal rendering remains a supervised check.
+
 ## Remaining live checks
 
 The user should still supervise a small disposable-workspace cycle on each installed provider: extension/MCP discovery, authentication, actual event shapes, permission/managed-setting behavior, model availability and target-machine sandbox semantics. Confirm the persisted stage receipt and exact plan approval before allowing a Developer edit. Do not treat green stubs as permission to enable unattended writes or dangerous bypass flags.

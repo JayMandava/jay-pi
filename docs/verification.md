@@ -4,7 +4,7 @@
 
 ## Passed
 
-- **115 automated tests**, zero failures/skips, using `npm test`.
+- **151 automated tests**, zero failures/skips, using `npm test`.
 - JavaScript/TypeScript syntax checks and full extension TypeScript compilation against pinned pi 1.4.0 dependencies: `npm run check`.
 - Actual record-cycle MCP stdio initialization, tool catalog and successful/invalid calls against the official SDK/server; persisted run/cycle receipt verified.
 - Actual offline CLI demonstration: Planner, Developer, Tester and Lead complete with real SQLite records; missing/wrong-stage proof remains incomplete; failure, cancellation and interrupted-controller recovery have truthful terminal outcomes.
@@ -16,6 +16,19 @@
 48 additional tests exercise real adapter dispatch against isolated fake pi/Claude/Codex executables and independently verify host boundaries. Each provider completes a four-role cycle; Claude/Codex read the actual generated MCP configuration and launch the real record-cycle server. Negative cases include missing/wrong/rejected evidence, malformed streams, nonzero exits after valid receipts, provider errors, signals, cancellation/timeouts, stale approvals, unsupported capabilities and a separate-controller crash recovered without replay. Exact argv/stdin/environment/profile/temporary-file and persisted-proof assertions are included. See [functional testing](functional-testing.md).
 
 Independent QA found and regression-tested a real dispatch defect: JavaScript inherited property names could bypass provider validation and fall through to Codex. All three entry points now require an own string registry key; explicit invalid values no longer silently default. The final run passed all 115 tests without skips, 44-file syntax checks, full TypeScript checking and the nine-scenario offline demonstration. No live provider was contacted.
+
+## Feature-oriented end-to-end follow-up — HARNESS-FEATURE-QA-R1
+
+36 further tests cover the actual CLI command cycle and exit codes, genuine PTY approval with automated input (accept/decline/interruption/revision races), pi frontend actions and confirmations, profile callbacks, actual runtime-to-status-ticker integration, and safe legacy extension behavior. Independent QA reran the final source: **151/151 tests pass with zero skips/failures**, 47-file syntax checks and full TypeScript compilation pass; the nine-scenario CLI demo was rerun successfully. The [feature matrix](feature-coverage.md) maps every documented feature to direct evidence or an explicit gap; this is not an exhaustive-correctness claim.
+
+Regression fixes discovered by this pass:
+
+- Aborted pi plan-approval requests no longer persist consent before or after a dialog.
+- Grill preserves literal option text, rejects ambiguous/unknown labels, does not record canceled answers, and prevents concurrent prompts.
+- Pi session identity now reaches persisted runtime records, making real runs visible only in their owning status ticker.
+- CLI timeout validation now matches the runtime’s 10 ms minimum.
+
+Optional Jev successful database persistence remains untested here because its legacy sqlite3 executable prerequisite is absent; no live Jev API was called. Patch matching/idempotence is tested only on disposable synthetic package files, not a global pi installation. Actual pi TUI rendering, full provider/model selection, vendor authentication/managed settings and target-OS sandbox behavior remain explicit live checks.
 
 ## Independent regression work
 

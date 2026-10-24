@@ -17,14 +17,16 @@ export default function planApproval(pi: ExtensionAPI) {
     label: 'Approve plan',
     description: 'Show the exact latest plan and require an explicit human confirmation. Approval is bound to its row and content digest; background agents cannot self-approve.',
     parameters: ApprovePlanParams,
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const fail = (text: string) => ({ details: undefined, content: [{ type: 'text' as const, text }], isError: true });
+      if (signal?.aborted) return fail('Plan approval canceled before review. Developer remains blocked.');
       if (!ctx.hasUI) return fail('approve_plan requires an interactive session — a background subagent cannot self-approve a plan.');
       try {
         const plan = getLatestApproach(ctx.cwd);
         if (!plan) return fail('No approach.db row found to approve — Planner has not recorded a plan yet.');
         if (params.approachRowId !== undefined && params.approachRowId !== plan.id) return fail('Only the latest existing plan may be approved. Review the latest plan first.');
         const confirmed = await ctx.ui.confirm('Approve this exact plan?', `Approach row: ${plan.id}\nCycle: ${plan.cycle_id ?? '(none)'}\nDigest: ${plan.digest}\n\n${plan.summary}\n\nStructured plan:\n${plan.payload}\n\nThis authorizes Developer to execute this plan. It does not authorize external publication or disable runner permissions.`);
+        if (signal?.aborted) return fail('Plan approval canceled during review. Developer remains blocked.');
         if (!confirmed) return fail('Plan approval declined. Developer remains blocked.');
         // The transaction rechecks the displayed digest after the asynchronous dialog.
         const result = approveApproach(ctx.cwd, plan.id, { confirmed: true, actor: 'interactive-human', expectedDigest: plan.digest });

@@ -123,7 +123,7 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
                     return text('Canceled while waiting for confirmation; no run started.', undefined, true);
                 }
                 const handle = h.start({
-                    agent, task: params.task, previousRunId: params.previousRunId, cycleId: params.cycleId, timeoutMs: params.timeoutMs, envAllowlist: params.envAllowlist, permissionProfile: params.allowEdits ? 'workspace-write' : 'read-only', background, autoHandoff,
+                    agent, sessionId: ctx.sessionManager.getSessionId(), task: params.task, previousRunId: params.previousRunId, cycleId: params.cycleId, timeoutMs: params.timeoutMs, envAllowlist: params.envAllowlist, permissionProfile: params.allowEdits ? 'workspace-write' : 'read-only', background, autoHandoff,
                     onUpdate: background ? undefined : (record: any) => onUpdate?.(text(`${statusText(record)}\n${finalOutput(record.results[0]?.messages) || '(running...)'}`, { action: 'run', ...record })),
                 });
                 const abort = () => { try {

@@ -147,7 +147,7 @@ async function main() {
     if (!opts.role || !opts.task) throw new Error('run requires --role and --task.');
     if (!['planner', 'developer', 'tester', 'lead'].includes(opts.role)) throw new Error('Role must be planner, developer, tester or lead.');
     const timeoutMs = opts.timeout === undefined ? 300000 : Number(opts.timeout);
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) throw new Error('--timeout must be an integer from 1 to 3600000 milliseconds.');
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10 || timeoutMs > 3600000) throw new Error('--timeout must be an integer from 10 to 3600000 milliseconds.');
     const handle = await harness.start({ agent: { name: opts.role, runner: opts.runner ?? 'pi', model: opts.model, systemPrompt: rolePrompt(opts.role) }, task: opts.task, cycleId: opts.cycle, previousRunId: opts.previous, timeoutMs, permissionProfile: opts['allow-edits'] ? 'workspace-write' : 'read-only' });
     const stop = () => { void harness.cancel(handle.runId); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);

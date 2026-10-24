@@ -108,7 +108,7 @@ Unsupported options must fail rather than silently relax restrictions. No
 claim of production readiness, live account validation, or universal provider
 compatibility is made.
 
-[Architecture](docs/architecture.md) · [Migration notes](docs/migration.md) · [Morning walkthrough](docs/morning-walkthrough.md)
+[Architecture](docs/architecture.md) · [Migration notes](docs/migration.md) · [Morning walkthrough](docs/morning-walkthrough.md) · [Feature coverage & live checklist](docs/feature-coverage.md)
 
 ## How it fits together
 

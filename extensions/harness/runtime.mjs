@@ -78,7 +78,7 @@ export function createHarness({ cwd }) {
     const store = createRunStore(cwd);
     const key = id => `${cwd}\0${id}`;
     function start(options) {
-        const { agent, task, previousRunId, cycleId, onUpdate } = options;
+        const { agent, task, previousRunId, cycleId, sessionId, onUpdate } = options;
         if (!agent || typeof agent.name !== 'string' || !agent.name.trim()) {
             throw new Error('Agent name is required');
         }
@@ -87,6 +87,9 @@ export function createHarness({ cwd }) {
         }
         if (cycleId !== undefined && (typeof cycleId !== 'string' || !cycleId.trim() || cycleId.length > 200)) {
             throw new Error('Invalid cycleId');
+        }
+        if (sessionId !== undefined && (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 256 || /[\x00-\x1f\x7f]/.test(sessionId))) {
+            throw new Error('Invalid sessionId');
         }
         if (options.requireIsolation) {
             throw new Error('This local harness cannot guarantee hostile-code isolation; use an externally provisioned sandbox');
@@ -132,7 +135,7 @@ export function createHarness({ cwd }) {
         }
         const runId = newRunId();
         const record = {
-            schemaVersion: 1, runId, status: 'running', mode: 'single', createdAt: now(), updatedAt: now(), cwd, artifactPath: store.file(runId), ownerPid: process.pid, background: options.background ?? false, autoHandoff: options.autoHandoff ?? false, previousRunId, cycleId, approval, events: [], results: [{
+            schemaVersion: 1, runId, status: 'running', mode: 'single', createdAt: now(), updatedAt: now(), cwd, artifactPath: store.file(runId), ownerPid: process.pid, background: options.background ?? false, autoHandoff: options.autoHandoff ?? false, previousRunId, cycleId, sessionId, approval, events: [], results: [{
                     agent: agent.name, agentSource: agent.source || 'unknown', task, runner, model: agent.model, exitCode: null, messages: [], stderr: '', usage: {
                         input: null, output: null, cacheRead: null, cacheWrite: null, cost: null, contextTokens: null, turns: 0
                     }
