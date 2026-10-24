@@ -32,7 +32,7 @@ export function scopedEnvironment(source = process.env, allowlist = []) {
     return env;
 }
 export function buildInvocation({ runner = 'pi', agent, prompt, runId, cycleId, mockScenario = 'success', env, tempDir, permissionProfile = 'read-only' }) {
-    if (!PROVIDERS[runner]) {
+    if (typeof runner !== 'string' || !Object.hasOwn(PROVIDERS, runner)) {
         throw new Error(`Unsupported runner: ${runner}`);
     }
     if (!['read-only', 'workspace-write'].includes(permissionProfile)) {
@@ -93,6 +93,9 @@ export function buildInvocation({ runner = 'pi', agent, prompt, runId, cycleId, 
 }
 const textMessage = text => ({ role: 'assistant', content: [{ type: 'text', text }], timestamp: Date.now() });
 export function createNormalizer(runner) {
+    if (typeof runner !== 'string' || !Object.hasOwn(PROVIDERS, runner)) {
+        throw new Error(`Unsupported runner: ${runner}`);
+    }
     const names = new Map();
     return event => {
         const messages = [];

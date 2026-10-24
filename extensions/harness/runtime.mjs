@@ -94,8 +94,8 @@ export function createHarness({ cwd }) {
         if (options.resume) {
             throw new Error('Provider session resume is unsupported; use previousRunId for explicit context-only continuation');
         }
-        const runner = agent.runner || 'pi';
-        if (!PROVIDERS[runner]) {
+        const runner = agent.runner === undefined ? 'pi' : agent.runner;
+        if (typeof runner !== 'string' || !Object.hasOwn(PROVIDERS, runner)) {
             throw new Error(`Unsupported runner: ${runner}`);
         }
         const timeoutMs = options.timeoutMs ?? 15 * 60000;
