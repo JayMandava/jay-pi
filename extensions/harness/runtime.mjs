@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { createRunStore, newRunId, TERMINAL } from './run-store.mjs';
 import { buildInvocation, createNormalizer, scopedEnvironment, PROVIDERS } from './adapters.mjs';
@@ -10,6 +10,31 @@ import { verifyCycleEvidence } from '../cycle-store.mjs';
 const STAGES = {
     planner: 'approach', developer: 'implementation', tester: 'feedback', lead: 'review'
 };
+const MAX_REVIEW_DIFF_CHARS = 60000;
+// Tester and Lead run with read-only file tools and no shell, so they cannot
+// produce the diff themselves. The harness collects it with fixed argv (no
+// shell, no model input) and hands it over as labelled context.
+export function buildReviewContext(cwd) {
+    const git = args => {
+        try {
+            return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+        }
+        catch {
+            return null;
+        }
+    };
+    const status = git(['status', '--short']);
+    if (status === null) {
+        return 'Harness-collected change context: unavailable (not a git repository).';
+    }
+    let diff = git(['diff', 'HEAD']) ?? '';
+    let note = '';
+    if (diff.length > MAX_REVIEW_DIFF_CHARS) {
+        note = `\n[diff truncated: showing ${MAX_REVIEW_DIFF_CHARS} of ${diff.length} characters; inspect the rest with your file tools]`;
+        diff = diff.slice(0, MAX_REVIEW_DIFF_CHARS);
+    }
+    return `Harness-collected change context (produced by the harness running "git status --short" and "git diff HEAD", not by a model):\n${status.trim() || '(clean working tree)'}\n\n${diff.trim() || '(no diff against HEAD)'}${note}`;
+}
 const active = new Map();
 const now = () => new Date().toISOString();
 const isAlive = pid => {
@@ -125,6 +150,11 @@ export function createHarness({ cwd }) {
         let effectiveTask = task;
         if (approval) {
             effectiveTask = `Approved plan row ${approval.approachRowId} (digest ${approval.digest}):\n${approval.summary}\n${approval.payload}\n\nTask: ${task}`;
+        }
+        if (agent.name === 'tester' || agent.name === 'lead') {
+            const row = getLatestApproach(cwd);
+            const plan = row ? `Latest recorded plan, row ${row.id} (digest ${row.digest}):\n${row.summary}\n${row.payload}\n\n` : '';
+            effectiveTask = `${plan}${buildReviewContext(cwd)}\n\nTask: ${task}`;
         }
         if (previousRunId) {
             const prior = store.get(previousRunId);
