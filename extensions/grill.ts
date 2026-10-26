@@ -27,6 +27,7 @@ const GrillParams = Type.Object({
 });
 
 export default function grill(pi: ExtensionAPI) {
+	let questionPending = false;
 	pi.registerTool({
 		name: "grill",
 		label: "Grill",
@@ -38,33 +39,48 @@ export default function grill(pi: ExtensionAPI) {
 			if (!ctx.hasUI) {
 				return {
 					content: [{ type: "text", text: "grill requires an interactive session with UI — this cannot run from a background subagent." }],
-					isError: true,
+					isError: true, details: {},
 				};
 			}
 			if (!params.options.includes(params.recommended)) {
 				return {
 					content: [{ type: "text", text: `recommended ("${params.recommended}") must be one of options: ${params.options.join(", ")}.` }],
-					isError: true,
+					isError: true, details: {},
 				};
 			}
 
 			const labeled = params.options.map((option) => (option === params.recommended ? `${option} (recommended)` : option));
-			const title = params.context ? `${params.context}\n\n${params.question}` : params.question;
-			const answer = await ctx.ui.select(title, labeled);
-			const resolvedAnswer = answer?.replace(/ \(recommended\)$/, "") ?? null;
-
-			appendHistoryEvent(ctx.cwd, {
-				event: "grill",
-				question: params.question,
-				options: params.options,
-				recommended: params.recommended,
-				answer: resolvedAnswer,
-			});
-
-			if (resolvedAnswer === null) {
-				return { content: [{ type: "text", text: "Human dismissed the question without answering." }], isError: true };
+			if (new Set(labeled).size !== labeled.length) {
+				return { content: [{ type: "text", text: "Options produce ambiguous display labels. Use distinct options before asking the human." }], isError: true, details: {} };
 			}
-			return { content: [{ type: "text", text: `Human answered: ${resolvedAnswer}` }], details: { question: params.question, answer: resolvedAnswer } };
+			if (_signal?.aborted) return { content: [{ type: "text", text: "Question canceled before opening the UI." }], isError: true, details: {} };
+			if (questionPending) return { content: [{ type: "text", text: "Another question is awaiting a human answer. Finish it before asking another." }], isError: true, details: {} };
+			questionPending = true;
+			try {
+				const title = params.context ? `${params.context}\n\n${params.question}` : params.question;
+				const answer = await ctx.ui.select(title, labeled);
+				if (_signal?.aborted) return { content: [{ type: "text", text: "Question canceled; no answer was recorded." }], isError: true, details: {} };
+				// Preserve the literal selected option. A non-recommended option may
+				// legitimately end in " (recommended)"; stripping text corrupts it.
+				const selectedIndex = answer === undefined ? -1 : labeled.indexOf(answer);
+				if (answer !== undefined && selectedIndex < 0) {
+					return { content: [{ type: "text", text: "The UI returned an unknown option; no answer was recorded." }], isError: true, details: {} };
+				}
+				const resolvedAnswer = selectedIndex < 0 ? null : params.options[selectedIndex];
+
+				appendHistoryEvent(ctx.cwd, {
+					event: "grill",
+					question: params.question,
+					options: params.options,
+					recommended: params.recommended,
+					answer: resolvedAnswer,
+				});
+
+				if (resolvedAnswer === null) {
+					return { content: [{ type: "text", text: "Human dismissed the question without answering." }], isError: true, details: {} };
+				}
+				return { content: [{ type: "text", text: `Human answered: ${resolvedAnswer}` }], details: { question: params.question, answer: resolvedAnswer } };
+			} finally { questionPending = false; }
 		},
 	});
 }

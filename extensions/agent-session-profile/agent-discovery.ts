@@ -100,7 +100,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
       .map((toolName: string) => toolName.trim())
       .filter(Boolean);
 
-    const runner = frontmatter.runner === "claude-cli" ? "claude-cli" : "pi";
+    const runner = frontmatter.runner || "pi";
+    if (!["pi", "claude-cli", "codex-cli"].includes(runner)) {
+      throw new Error(`Unsupported runner "${runner}" in ${filePath}; expected pi, claude-cli, or codex-cli.`);
+    }
 
     agents.push({
       name: frontmatter.name,
@@ -108,7 +111,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
       tools: tools && tools.length > 0 ? tools : undefined,
       model: frontmatter.model,
       thinking: frontmatter.thinking,
-      runner,
+      runner: runner as AgentRunner,
       systemPrompt: body.trim(),
       source,
       filePath,

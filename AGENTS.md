@@ -73,11 +73,11 @@ A Planner/Developer/Tester run that exits cleanly (exit code 0) but never made a
 
 **`incomplete` is not automatically a failure.** Some tasks legitimately don't touch the DB (a quick question, a status check). It's an honest signal, not a verdict — when Lead sees it in a handoff, check whether a DB write was actually expected for that task before treating it as a problem. Silently re-labeling every `incomplete` as `completed` (or as `failed`) defeats the point of having a third state.
 
-**Confirmed live in testing, not hypothetical:** Planner (running a mid-strength model) wrote its Approach row by hand via `bash`/`sqlite3` instead of calling `record_cycle`, then its own closing message claimed *"record_cycle stage approach recorded successfully"* — false. The `incomplete` status caught it correctly by checking the actual message trace rather than trusting that sentence. This is exactly why the tool result text always leads with the real computed status (`[status: ...]`) now, not just whatever prose the subagent returned — see `formatStatusLine` in `lifecycle-subagent/index.ts`.
+**Historical pre-refactor observation (not live validation of the current adapters):** Planner (running a mid-strength model) wrote its Approach row by hand via `bash`/`sqlite3` instead of calling `record_cycle`, then its own closing message claimed *"record_cycle stage approach recorded successfully"* — false. The `incomplete` status caught it correctly by checking the actual message trace rather than trusting that sentence. This is exactly why the tool result text always leads with the real computed status (`[status: ...]`) now, not just whatever prose the subagent returned — see the shared proof check in `harness/runtime.mjs` and status rendering in `lifecycle-subagent/index.ts`.
 
 ### The `orphaned` run status
 
-If `pi` (or the whole machine) crashes while a subagent is mid-run, that run's JSON record would otherwise stay stuck at `status: "running"` forever — nothing is left alive to ever flip it to a terminal state. To catch this, every interactive Lead session sweeps `data/subagent-runs/*.json` at startup for records still marked `running` whose process is no longer alive (checked via `process.kill(pid, 0)`), and flips those to `orphaned`.
+If `pi` (or the whole machine) crashes while a subagent is mid-run, that run's JSON record would otherwise stay stuck at `status: "running"` forever — nothing is left alive to ever flip it to a terminal state. To catch this, every interactive Lead session invokes shared recovery at startup to inspect durable running records and process ownership, marking abandoned records `orphaned` without replaying work. The CLI exposes the same recovery operation.
 
 Like `incomplete`, `orphaned` is a fact about the machinery, not a verdict on the work — it means the process watching the run died, not that the run's actual output was necessarily bad. Whatever the subagent did before the crash (files edited, partial DB writes) is still wherever it landed; check the run's own message trace to see how far it got before deciding whether to redo the task. This sweep only runs from the interactive Lead session (not from every background subagent's own process, which would just be redundant), so it fires once per new session start, not continuously.
 
@@ -86,10 +86,10 @@ Like `incomplete`, `orphaned` is a fact about the machinery, not a verdict on th
 The lesson above generalizes past `record_cycle`. Anything with a real effect — a DB write, an external-sink write, a browser check via Playwright MCP, any MCP-backed action — should be a **tool call that shows up in the message trace**, not a claim in prose. A role's own summary of what it did is narration; only an actual tool call (or its absence) is fact.
 
 - **DB writes**: code-enforced via `record_cycle` + the `incomplete` status (above).
-- **External-sink writes**: code-enforced via `extensions/external-sink-gate.ts` — these are already MCP tool calls, and the gate gets a chance to intercept every one of them; a role cannot fake this one even by trying, since there's no non-tool-call path to actually write to Notion/Linear/etc.
+- **External-sink writes**: configured calls through the pi hook are gated by `extensions/external-sink-gate.ts`. Arbitrary shell/network requests and other clients are outside this gate; do not treat it as an OS or network security boundary.
 - **Browser/Playwright checks, or any other MCP tool**: not code-enforced today — there's no generic "did a claimed check actually happen" mechanism in this harness yet. If a role's summary claims it "verified in the browser" or "tested via MCP," and that claim matters, ask for the specific evidence (the actual tool call, a URL, a screenshot, literal output) rather than accepting the sentence at face value, the same way `record_cycle`'s check refuses to accept a subagent's own account of a DB write.
 
-This is a standing instruction for Lead's judgment where no code check exists yet, not a promise that every MCP call is automatically verified — extend the code-level check (mirroring `hasSuccessfulCycleRecord` in `lifecycle-subagent/index.ts`) if a specific claim-type keeps needing manual scrutiny.
+This is a standing instruction for Lead's judgment where no code check exists yet, not a promise that every MCP call is automatically verified — extend the code-level check (mirroring `hasVerifiedCycleRecord` in `harness/runtime.mjs`) if a specific claim-type keeps needing manual scrutiny.
 
 ### The `history.jsonl` audit ledger
 
@@ -97,9 +97,9 @@ Every `record_cycle` write, every `grill` exchange, and every `approve_plan` cal
 
 ## Subagent Process Isolation
 
-Every background Planner/Developer/Tester run is a separate top-level `pi` or `claude` child process (never a nested sub-agent facility inside another harness) — this is deliberate: independent top-level processes survive a dropped stream or a crashed turn without taking the rest of a fan-out down with them, where nested sub-agent facilities are more fragile to a single bad stream. Don't collapse this into an in-process "spawn a nested agent" call even if a future pi/Claude version makes that easier — the isolation is the point.
+Every background Planner/Developer/Tester run is a separate provider child process, not an in-process nested-agent call. This limits shared conversational failures, but does not guarantee survival after controller or machine termination. Preserve the process boundary when extending provider support; inspect durable run state and partial work after interruption rather than silently replaying it.
 
-Each child process's environment is scoped via `scopedEnv()` in `lifecycle-subagent/index.ts`, not inherited wholesale — add prefixes there for any third-party service credentials that end up in your own `mcp.json`/env but have no business reaching a coding subagent. It ships empty (nothing generic to deny by default); this is a narrow, denylist-based starting point, not full deny-by-default env scoping.
+The shared runtime scopes child environments to a minimal operating-system set plus explicitly allowlisted variable names. Do not broaden inheritance silently to fix authentication. HOME remains available for provider login/configuration, so disk credentials are not isolated. Read-only is the default permission profile; workspace-write requires explicit opt-in and remains subject to provider capabilities. No dangerous permission-bypass mode is supported. These are trusted-local workflow controls, not hostile-agent containment or a promise that every provider implements an OS sandbox.
 
 ## Default role model policy
 
@@ -238,8 +238,9 @@ Do not treat the external sink as the only memory layer for cycles. Structured c
 ### Optional PR-scoring skill bridge (Lead only — not a substitute for the correctness pass or a complexity-review skill)
 Some PR-scoring skills (structured axis-scoring rubrics) are built as Claude-Code-native skills: they spawn a classifier and several axis-reviewer sub-agents via Claude Code's own Task tool, not pi's `subagent` tool (which only spawns Planner/Developer/Tester with their fixed prompts — it has no ad-hoc "spawn a custom sub-agent" mode a skill like that needs). If you have one installed and want Lead to use it, bridge it the same way Developer's `claude-cli` execution path already works: Lead runs it as a direct `claude -p` invocation, e.g.
 ```
-claude -p "/skill:<your-skill-name> pr-review <owner/repo#number> — payload-only, do not publish. Return the assembled review payload (score, radar per axis, verdict, triaged comments) as your final answer. Do not call gh to post or publish anything." --dangerously-skip-permissions
+claude -p "/skill:<your-skill-name> pr-review <owner/repo#number> — payload-only, do not publish. Return the assembled review payload (score, radar per axis, verdict, triaged comments) as your final answer. Do not call gh to post or publish anything."
 ```
+- A payload-only instruction is not a security boundary. Use restricted provider tools and retain human approval before publication; never add permission-bypass flags to make the review unattended.
 - **Payload-only is mandatory, every time**, if the skill you're using defaults to publishing straight to GitHub — that conflicts with this harness's rule that no external write happens without the human seeing the literal content first (same principle as the External Sink Rule). Never omit the payload-only instruction if your skill has an auto-publish default.
 - Parse the returned score/radar/verdict/comments into `data/review.db` alongside Lead's own correctness findings and any complexity-review skill's output — complementary lenses, not competing ones.
 - The **human's approval during the Grilling Discipline pass is what authorizes posting to GitHub**, if posting is even wanted — a scoring skill's own publish step should never be triggered automatically as part of this flow.
@@ -470,7 +471,7 @@ The first bullet above ("approving the plan") is now code-enforced, not just con
 
 The approval is tied to a specific `approach.db` row id, not just "approval happened at some point" — if Planner revises the plan (a new row lands after a prior approval), that old approval does not carry over; call `approve_plan` again against the new row.
 
-`skipApprovalGuard: true` on the `subagent` tool bypasses this for a deliberate, explicit exception — it still requires an interactive confirmation dialog, and is refused outright if no UI is available to confirm it. Use it rarely and knowingly; it exists for genuine exceptions, not as a habitual way around getting a real approval.
+`skipApprovalGuard` is deprecated and refused. Review and approve the latest plan instead. Workspace mutation is a separate permission: the pi tool requires actual interactive confirmation for `allowEdits`; the CLI uses an explicit `--allow-edits` request. Neither substitutes for plan approval or authorizes external publication.
 
 ## Bias toward standard paths
 
@@ -481,6 +482,26 @@ When tooling already exists and is good enough, prefer:
 - simple scripts over custom frameworks
 
 Build custom machinery only when the standard path clearly fails the requirement.
+
+## Shared engine and verification boundary
+
+The pi integration and standalone CLI use `extensions/harness/runtime.mjs`
+through `createHarness({ cwd })`; preserve a single execution engine. Core
+cycle and approval persistence use Node 24 built-in SQLite. Keep stage writes
+through `record_cycle` or its supported shared `writeCycleRecord` API, not
+freehand SQL. A direct host API call is a real persistence action but must not
+be described as a provider's observed `record_cycle` tool call.
+
+The offline demo uses deterministic mock subprocesses and a clearly labeled
+synthetic fixture approval. It does not demonstrate real human consent or
+live authenticated provider support. Do not promote fixture results into
+claims of live validation. Claude and Codex adapters require independent
+live compatibility checks before operational reliance; Codex is experimental.
+
+Approval APIs are trusted-host interfaces, not tools for child agents to
+self-approve. Filesystem access can alter local records: auditability is not
+tamper resistance. Keep the existing human review contracts even when the
+runtime's minimum mechanical gate is narrower than the full discipline.
 
 ## SQLite usage rules
 

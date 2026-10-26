@@ -1,0 +1,32 @@
+{
+  "name": "jay-pi-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local evidence-first process engine for human-approved agent work",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "jay-pi": "./bin/jay-pi.mjs"
+  },
+  "exports": {
+    ".": "./extensions/harness/runtime.mjs",
+    "./records": "./extensions/cycle-store.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check.mjs && tsc --noEmit",
+    "demo": "node bin/jay-pi.mjs demo",
+    "doctor": "node bin/jay-pi.mjs doctor",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@types/node": "24.10.1",
+    "typebox": "1.4.3",
+    "typescript": "5.9.3"
+  },
+  "license": "MIT"
+}

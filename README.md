@@ -1,9 +1,9 @@
 <div align="center">
 
-# pi-harness
+# Jay Pi
 
 **A process-engineering layer for agentic development, built on [pi](https://github.com/earendil-works/pi-coding-agent).**
-The harness is just what makes the gates unbypassable.
+A local, evidence-first process engine for human-approved agent work.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-111111?style=flat-square)](LICENSE)
 [![Built for pi](https://img.shields.io/badge/built%20for-pi-111111?style=flat-square)](https://github.com/earendil-works/pi-coding-agent)
@@ -20,20 +20,95 @@ tool call, not freehand SQL — see below), a human-in-the-loop review
 pattern ("Grilling Discipline") instead of single yes/no gates, and an
 optional, gated write-back to whatever external tracker you use.
 
-This isn't a pi fork or plugin — it's an `AGENTS.md` operating contract plus a
-handful of pi extensions and agent-role prompt files that you install into
-your own `~/.pi/agent/` directory.
+Jay Pi combines an `AGENTS.md` operating contract, pi extensions and role prompts,
+and a reusable local engine shared by the pi integration and standalone CLI.
+The existing pi installation path remains available; the offline demo needs
+only Node 24+ and does not install or authenticate an agent provider.
 
 The process — plan, approve, implement, verify, review — is the actual
 product. Swap the model, or swap pi for another agent entirely, and the
 same gates, the same verification, the same audit trail still hold; the
-harness underneath is just what makes each one impossible to skip.
+shared engine makes those checks explicit and auditable at supported entry points. These workflow checks are not an OS sandbox.
 
 **Jump to:** [How it fits together](#how-it-fits-together) ·
 [What's in here](#whats-in-here) ·
 [Install](#install) ·
 [Security posture](#security-posture--read-before-you-install) ·
 [Credits](#credits)
+
+## Start here: an offline working cycle
+
+Requires **Node 24+**. In this checkout:
+
+```sh
+npm ci --ignore-scripts
+npm test
+npm run demo
+node bin/jay-pi.mjs doctor
+```
+
+The demo uses **deterministic local fixture subprocesses, not an AI model**.
+It runs Planner → synthetic fixture approval → Developer → Tester → Lead,
+then demonstrates missing/wrong-stage evidence, provider failure, and
+cancellation. It uses the same runtime and real SQLite records as the pi
+integration. The printed temporary workspace is retained for inspection.
+No account, credential, network request, or real human approval is exercised.
+
+`doctor` checks prerequisite presence without launching providers. Installing
+root development dependencies does not install the nested record-cycle MCP
+server dependencies. For live Claude/Codex integration, install those separately:
+
+```sh
+npm ci --ignore-scripts --prefix extensions/mcp/record-cycle-server
+```
+
+### CLI: inspect first, then deliberately execute
+
+```sh
+node bin/jay-pi.mjs list --cwd /path/to/project
+node bin/jay-pi.mjs status RUN_ID --cwd /path/to/project
+node bin/jay-pi.mjs plan --cwd /path/to/project
+node bin/jay-pi.mjs approve --cwd /path/to/project
+node bin/jay-pi.mjs run --role planner --runner pi --task "Plan this change" --cwd /path/to/project
+```
+
+Replace `RUN_ID` and project paths with actual values. `approve` displays the
+latest plan and requires an exact confirmation in an interactive terminal;
+there is no unattended `--yes` bypass. A plan revision invalidates approval.
+Live `run` commands invoke your installed provider and may incur costs. They
+are **not** part of the offline quickstart. Developer requires an approved
+plan; writing permissions are a separate choice (`--allow-edits` requests
+`workspace-write`, subject to the provider's capabilities). Consult `--help`
+for result/events/recovery, timeouts, explicit context continuation, and JSON
+output. Recovery marks abandoned runs; it never automatically replays work.
+
+### One engine, two entry points
+
+`extensions/harness/runtime.mjs` exports `createHarness({ cwd })`. Its
+`start(...)`, `list()`, `get(runId)`, `cancel(runId)` and `recover()` operations
+are shared by the CLI and pi lifecycle extension. `start` returns a run ID and
+completion promise. SQLite stage records remain in `data/`; versioned run
+snapshots and lifecycle events are inspectable in `data/subagent-runs/`.
+Continuation via `previousRunId` transfers prior output as context, not a
+provider session resume or an exactly-once retry guarantee.
+
+### Provider support and verification
+
+| Runner | Integration | Default boundary | Verification here |
+|---|---|---|---|
+| `pi` | Existing JSON CLI integration, now using shared engine | Trusted local provider process; tool selection is not an OS sandbox | Offline contracts/fixtures; authenticated execution not validated |
+| `claude-cli` | Stream-JSON CLI adapter and record-cycle MCP | Restricted tools; no dangerous permission-bypass mode | Offline contracts/fixtures; authenticated execution not validated |
+| `codex-cli` | Experimental JSON CLI adapter and record-cycle MCP | Requests provider read-only sandbox by default; host MCP runs outside it | Offline contracts/fixtures; authenticated execution not validated |
+| `mock` | Deterministic fixture subprocess | Temporary local demo/test workspace | Not an LLM integration |
+
+Read-only is the default permission profile; workspace mutation requires an
+explicit `workspace-write` request. Provider capabilities differ: tool policy
+is not equivalent to an OS sandbox, and provider permissions still apply.
+Unsupported options must fail rather than silently relax restrictions. No
+claim of production readiness, live account validation, or universal provider
+compatibility is made.
+
+[Architecture](docs/architecture.md) · [Migration notes](docs/migration.md) · [Morning walkthrough](docs/morning-walkthrough.md) · [Feature coverage & live checklist](docs/feature-coverage.md)
 
 ## How it fits together
 
@@ -53,7 +128,8 @@ writes to and one external-sink section it offers — see the table below,
 not this diagram, for that mapping.
 
 Each role is a separate top-level `pi` (or `claude`) process, not a nested
-sub-agent call — a dropped stream in one never takes the rest down. Every
+sub-agent call. This limits shared conversational failures, but does not guarantee
+that work survives controller or machine termination. Every
 stage write goes through `record_cycle`, which `lifecycle-subagent` checks
 against the actual message trace, not the subagent's own account of it:
 
@@ -87,8 +163,7 @@ flowchart LR
     died mid-run — e.g. a `pi` crash — and was caught by a startup sweep in
     a later session, not that the work itself failed), and supports scoping
     each child process's
-    environment — see "Security posture" below, since this ships as a full
-    clone by default, not scoped out of the box.
+    environment through an explicit allowlist — see "Security posture" below.
   - `cycle-records.ts` — registers the `record_cycle` tool: the actual,
     machine-verified way Planner/Developer/Tester write their DB records,
     replacing freehand `sqlite3` calls the model used to construct itself.
@@ -124,9 +199,8 @@ flowchart LR
     `lifecycle-subagent` refuses to spawn Developer until the human has
     called it against the latest `approach.db` row. Tied to a specific row
     id, not "approval happened at some point" — a plan revision after
-    approval isn't silently still authorized. `skipApprovalGuard: true` on
-    `subagent` bypasses this for a deliberate exception, but still requires
-    an interactive confirmation and refuses outright with no UI to confirm.
+    approval isn't silently still authorized. `skipApprovalGuard` is deprecated and refused: review and approve the
+    current plan instead. Workspace edits additionally require explicit permission.
   - `agents-md-freshness.ts` — warns if a resumed/forked session's context
     predates the current `AGENTS.md`, so a stale operating contract doesn't
     silently keep running.
@@ -184,14 +258,12 @@ happened, across the whole cycle" as one `tail`, not a four-way join.
 ## Install
 
 ```sh
-git clone <this-repo> pi-harness
-cd pi-harness
+git clone https://github.com/JayMandava/jay-pi.git
+cd jay-pi
 ./install.sh
 ```
 
-One shot, in order: installs `pi` itself if it's missing (or updates it if
-it's already there), checks for `sqlite3` (every DB-backed extension here
-shells out to it), copies `extensions/`, `agents/`, and `patches/` into
+The optional pi installer installs/updates pi unless explicitly skipped, checks runtime prerequisites, copies `extensions/`, `agents/`, and `patches/` into
 `~/.pi/agent/` (always fresh — that's this repo's actual content), writes
 `settings.json` / `models.json` / `mcp.json` / `~/AGENTS.md` **only if they
 don't already exist** (never overwrites your own config), runs
@@ -247,34 +319,39 @@ affected either way.
 
 ### Optional: scoping subagent environments
 
-`ENV_DENYLIST_PREFIXES` in `extensions/lifecycle-subagent/index.ts` ships
-empty. If you have third-party service credentials sitting in your own
-`mcp.json`/environment that a coding subagent has no reason to see, add
-their env-var prefixes there so background Planner/Developer/Tester
-processes don't inherit them.
+The shared runtime passes a minimal operating-system environment plus names
+explicitly supplied in `envAllowlist`. Unrelated shell secrets are not copied
+by default. Configure provider-specific variables deliberately; do not use
+blanket inheritance to fix authentication failures. `HOME` remains available
+for provider login/configuration, so environment filtering alone does not
+isolate credentials stored on disk.
 
-## Security posture — read before you install
+## Security posture — read before live use
 
-This ships permissive by default, on purpose (it's built for a personal or
-small-team setup where the human is already trusted), but that means two
-things are worth knowing rather than discovering later:
+This is a **trusted-local workflow controller**, not hostile-agent isolation.
 
-- **Every background Planner/Developer/Tester process inherits your full
-  environment** unless you fill in `ENV_DENYLIST_PREFIXES` above. That
-  includes any API keys, tokens, or credentials sitting in your shell
-  environment or `mcp.json` — a coding subagent doesn't need most of them.
-- **The Claude CLI runner path** (`runner: "claude-cli"` in a role's
-  frontmatter, used when Developer's execution path is set to Claude)
-  invokes `claude -p --dangerously-skip-permissions` — it does not prompt
-  for individual tool approvals. That's what makes unattended background
-  runs possible at all, but it means a Claude-routed subagent can run any
-  tool without a per-call confirmation.
+- Approval and stage-proof checks are enforced through supported runtime
+  entry points. Someone with filesystem/code execution access can alter
+  records or call trusted host APIs; SQLite and JSONL are not tamper-proof.
+- No adapter enables `--dangerously-skip-permissions`. Read-only is the
+  default profile; `--allow-edits` is an explicit workspace-write request,
+  not permission to publish, deploy, or access external services.
+- Pi is a local process, not an OS sandbox. Claude tool restrictions are not
+  an OS sandbox either. Codex requests its provider sandbox, but the
+  record-cycle MCP server is a host process with narrowly scoped writes.
+- Provider authentication/configuration can still be accessible through
+  `HOME`. Use a separate OS account/container if that trust level is too broad.
+- The external-sink gate covers configured calls through its pi hook. It
+  cannot intercept arbitrary HTTP requests, shell commands, or other clients.
+- Recovery records abandoned work without re-executing it. Review partial
+  files and records before deciding to retry; side effects are not exactly-once.
+- Run transcripts and stage records can contain sensitive task content.
+  Treat `data/` as private local state; do not commit or publish it.
 
-Neither of these is hidden — they're both plainly visible in
-`extensions/lifecycle-subagent/index.ts` — but they're easy to miss if you
-only read the feature list above. If you're running this somewhere
-credentials or blast radius actually matter, fill in the env denylist (or
-build it out into a real allowlist) before you rely on background runs.
+Core cycle/approval storage uses Node 24 built-in SQLite and does not require
+the `sqlite3` executable. The optional Jev cross-check still requires the `sqlite3` executable,
+remains opt-in, and can incur external API costs. Do not interpret a successful offline fixture run as a live provider
+security or integration certification.
 
 ## Credits
 

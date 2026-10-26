@@ -56,7 +56,7 @@ export default function cycleRecords(pi: ExtensionAPI) {
 			});
 
 			if (!result.ok) {
-				return { content: [{ type: "text", text: result.reason }], isError: true };
+				return { content: [{ type: "text", text: result.reason }], isError: true, details: result };
 			}
 
 			return {
