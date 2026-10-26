@@ -19,7 +19,7 @@ export function scopedEnvironment(source = process.env, allowlist = []) {
     if (!Array.isArray(allowlist) || allowlist.some(k => typeof k !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))) {
         throw new Error('envAllowlist must contain environment variable names');
     }
-    const base = ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TERM'];
+    const base = ['PATH', 'HOME', 'USER', 'LOGNAME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TERM'];
     const env = {};
     for (const key of new Set([...base, ...allowlist])) {
         if (key.startsWith('PI_HARNESS_')) {

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {createHarness,hasVerifiedCycleRecord} from '../extensions/harness/runtime.mjs';
+import {execFileSync} from 'node:child_process';
+import {createHarness,hasVerifiedCycleRecord,buildReviewContext} from '../extensions/harness/runtime.mjs';
 import {createRunStore} from '../extensions/harness/run-store.mjs';
 import {getLatestApproach,approveApproach} from '../extensions/harness/approval-store.mjs';
 import {writeCycleRecord} from '../extensions/cycle-store.mjs';
@@ -77,4 +78,17 @@ test('cross-process cancel is requested without signaling persisted PID',async t
  let output='',id;let resolveId;const ready=new Promise(r=>resolveId=r);child.stdout.on('data',data=>{output+=data;const first=output.split('\n')[0];if(!id&&output.includes('\n')){id=JSON.parse(first).runId;resolveId(id);}});
  const done=new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0?resolve():reject(new Error(`controller exit ${code}`)));});
  const runId=await ready;assert.equal(h.cancel(runId).status,'running');await done;assert.equal(h.get(runId).status,'canceled');assert.match(output,/"status":"canceled"/);
+});
+
+test('review context hands Tester/Lead the real diff, flags truncation and non-git dirs',t=>{
+ const {cwd}=fixture(t);
+ assert.match(buildReviewContext(cwd),/unavailable \(not a git repository\)/);
+ const g=(...a)=>execFileSync('git',a,{cwd,stdio:'ignore'});
+ g('init','-q');g('-c','user.name=t','-c','user.email=t@t','commit','-q','--allow-empty','-m','init');
+ fs.writeFileSync(path.join(cwd,'a.txt'),'one\n');g('add','a.txt');g('-c','user.name=t','-c','user.email=t@t','commit','-q','-m','a');
+ assert.match(buildReviewContext(cwd),/\(clean working tree\)/);
+ fs.writeFileSync(path.join(cwd,'a.txt'),'one\ntwo\n');
+ const ctx=buildReviewContext(cwd);assert.match(ctx,/\+two/);assert.match(ctx,/not by a model/);
+ fs.writeFileSync(path.join(cwd,'a.txt'),'x'.repeat(70000)+'\n');
+ assert.match(buildReviewContext(cwd),/diff truncated: showing 60000 of/);
 });

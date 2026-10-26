@@ -8,6 +8,7 @@ function invocation(t,runner,extra={}) {const tempDir=fs.mkdtempSync(path.join(o
 test('environment is allowlisted, not copied; injection variables absent',()=>{
  const source={PATH:'/bin',HOME:'/home/example',EXAMPLE_SECRET:'never-forward',NODE_OPTIONS:'--require evil',PI_HARNESS_RUN_ID:'forged',ANTHROPIC_API_KEY:'explicit-key'};
  assert.deepEqual(scopedEnvironment(source),{PATH:'/bin',HOME:'/home/example'});
+ assert.deepEqual(scopedEnvironment({...source,USER:'u',LOGNAME:'u'}),{PATH:'/bin',HOME:'/home/example',USER:'u',LOGNAME:'u'},'macOS keychain login needs USER/LOGNAME');
  assert.equal(scopedEnvironment(source,['ANTHROPIC_API_KEY']).ANTHROPIC_API_KEY,'explicit-key');
  assert.equal(scopedEnvironment(source,['PI_HARNESS_RUN_ID']).PI_HARNESS_RUN_ID,undefined);
  assert.throws(()=>scopedEnvironment(source,['oops=value']),/variable names/);
