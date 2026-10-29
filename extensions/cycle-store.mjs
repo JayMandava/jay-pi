@@ -1,122 +1,94 @@
-import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { openDatabase, validRowId, prepareStorageFile } from './store/sqlite.mjs';
 
-// Single source of truth for writing a lifecycle cycle record — used by both
-// the pi-native `record_cycle` tool (cycle-records.ts) and the standalone MCP
-// server (mcp/record-cycle-server/) that exposes the same capability to
-// Claude-CLI-routed subagents, which have no path back into pi's own
-// registered tools. Whichever caller invokes this, the write itself is
-// identical: same schema, same thin-summary rejection, same
-// role-derived-strictly-from-stage guarantee. Plain JS (not TS) so a bare
-// `node` process (no pi, no type-stripping) can import it directly.
-
-export const STAGE_TABLE = {
-	approach: { db: "approach.db", defaultRole: "planner" },
-	implementation: { db: "implementation.db", defaultRole: "developer" },
-	feedback: { db: "feedback.db", defaultRole: "tester" },
-	review: { db: "review.db", defaultRole: "lead" },
-};
-
+// Shared by the pi tool, MCP server, standalone controller and offline tests.
+// Preserve the original per-stage SQLite schema and role-from-stage contract.
+export const STAGE_TABLE = Object.freeze({
+  approach: { db: 'approach.db', defaultRole: 'planner' },
+  implementation: { db: 'implementation.db', defaultRole: 'developer' },
+  feedback: { db: 'feedback.db', defaultRole: 'tester' },
+  review: { db: 'review.db', defaultRole: 'lead' },
+});
 export const MIN_SUMMARY_CHARS = 40;
 
-// One flat, append-only, cross-stage ledger — approach/implementation/
-// feedback/review writes, grill exchanges, and plan approvals all land here
-// in chronological order. Complements the per-stage DBs (which are the
-// source of truth for each stage's structured record) rather than replacing
-// them: this is for "what happened, in order, across the whole cycle" as a
-// single `tail`/`cat`, not a join across four DBs. Best-effort — a failure
-// here must never block the actual write it's logging.
 export function appendHistoryEvent(cwd, event) {
-	try {
-		const dir = path.join(cwd, "data");
-		fs.mkdirSync(dir, { recursive: true });
-		const line = JSON.stringify({ timestamp: new Date().toISOString(), ...event });
-		fs.appendFileSync(path.join(dir, "history.jsonl"), `${line}\n`);
-	} catch {
-		// logging the event is never allowed to fail the event itself
-	}
+  try {
+    const dir = path.join(cwd, 'data');
+    const filename = prepareStorageFile(path.join(dir, 'history.jsonl'));
+    fs.appendFileSync(filename, `${JSON.stringify({ ...event, timestamp: new Date().toISOString() })}\n`, { mode: 0o600 });
+  } catch { /* Best effort timeline; SQLite remains the source of truth. */ }
 }
 
-function quoteSqlString(value) {
-	return `'${value.replace(/'/g, "''")}'`;
-}
-
-function ensureTable(dbPath) {
-	const sql = `CREATE TABLE IF NOT EXISTS cycles (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		cycle_id TEXT,
-		role TEXT NOT NULL,
-		stage TEXT NOT NULL,
-		summary TEXT NOT NULL,
-		payload TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	);`;
-	// stdio is explicit on every sqlite3 call here: execFileSync inherits the child's stderr by
-	// default, which writes straight to the terminal and corrupts pi's TUI when this runs in-process.
-	execFileSync("sqlite3", [dbPath, sql], { stdio: ["ignore", "pipe", "pipe"] });
+function stageInfo(stage) {
+  return typeof stage === 'string' && Object.hasOwn(STAGE_TABLE, stage) ? STAGE_TABLE[stage] : null;
 }
 
 /**
- * @param {{cwd: string, stage: string, summary: string, data?: unknown, cycleId?: string}} params
- * @returns {{ok: true, table: string, dbPath: string, rowId: number, stage: string, role: string, cycleId: string|null, createdAt: string} | {ok: false, reason: string}}
+ * @param {{cwd: string, stage: string, summary: string, data?: unknown, cycleId?: string, runId?: string}} params
  */
-export function writeCycleRecord({ cwd, stage, summary, data, cycleId }) {
-	const stageInfo = STAGE_TABLE[stage];
-	if (!stageInfo) {
-		return { ok: false, reason: `Unknown stage: "${stage}". Valid stages: ${Object.keys(STAGE_TABLE).join(", ")}.` };
-	}
+export function writeCycleRecord({ cwd, stage, summary, data, cycleId, runId = process.env.PI_HARNESS_RUN_ID }) {
+  const info = stageInfo(stage);
+  if (!info) return { ok: false, reason: `Unknown stage: "${String(stage)}". Valid stages: ${Object.keys(STAGE_TABLE).join(', ')}.` };
+  if (typeof summary !== 'string') return { ok: false, reason: 'summary must be a string.' };
+  const trimmedSummary = summary.trim();
+  if (trimmedSummary.length < MIN_SUMMARY_CHARS) return { ok: false, reason: `Rejected: summary is only ${trimmedSummary.length} chars (minimum ${MIN_SUMMARY_CHARS}). Resend the full summary, do not shrink it to fit.` };
+  if (cycleId != null && typeof cycleId !== 'string') return { ok: false, reason: 'cycleId must be a string when supplied.' };
+  if (runId != null && (typeof runId !== 'string' || !/^run_[a-zA-Z0-9_-]{1,128}$/.test(runId))) return { ok: false, reason: 'Invalid runId.' };
+  let payload;
+  try {
+    payload = JSON.stringify(data ?? {});
+    if (payload === undefined) throw new Error('Not JSON serializable');
+  } catch { return { ok: false, reason: 'data must be JSON serializable.' }; }
+  const dbPath = path.join(cwd, 'data', info.db);
+  const db = openDatabase(dbPath);
+  const createdAt = new Date().toISOString();
+  const trimmedCycleId = cycleId?.trim() || null;
+  let rowId;
+  try {
+    db.exec('BEGIN IMMEDIATE;');
+    db.exec(`CREATE TABLE IF NOT EXISTS cycles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, cycle_id TEXT, role TEXT NOT NULL,
+      stage TEXT NOT NULL, summary TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+    );`);
+    if (!db.prepare('PRAGMA table_info(cycles)').all().some(column => column.name === 'run_id')) db.exec('ALTER TABLE cycles ADD COLUMN run_id TEXT;');
+    rowId = Number(db.prepare('INSERT INTO cycles (cycle_id, role, stage, summary, payload, created_at, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(trimmedCycleId, info.defaultRole, stage, trimmedSummary, payload, createdAt, runId ?? null).lastInsertRowid);
+    db.exec('COMMIT;');
+  } catch (error) { db.exec('ROLLBACK;'); throw error; } finally { db.close(); }
+  const result = { ok: true, table: 'cycles', dbPath: path.relative(cwd, dbPath), rowId, stage, role: info.defaultRole, cycleId: trimmedCycleId, runId: runId ?? null, createdAt };
+  appendHistoryEvent(cwd, { event: 'cycle_record', stage, role: info.defaultRole, rowId, cycleId: trimmedCycleId, summary: trimmedSummary });
+  return result;
+}
 
-	const trimmedSummary = (summary ?? "").trim();
-	if (trimmedSummary.length < MIN_SUMMARY_CHARS) {
-		return {
-			ok: false,
-			reason: `Rejected: summary is only ${trimmedSummary.length} chars (minimum ${MIN_SUMMARY_CHARS}). This usually means content was lost on the way in, not a limit to work around — resend the full summary, don't shrink it to fit.`,
-		};
-	}
+export function listCycleRecords(cwd, stage) {
+  const info = stageInfo(stage);
+  if (!info) throw new Error(`Unknown stage: ${String(stage)}`);
+  const filename = path.join(cwd, 'data', info.db);
+  if (!fs.existsSync(filename)) return [];
+  const db = openDatabase(filename, { readOnly: true });
+  try { return db.prepare('SELECT * FROM cycles ORDER BY id DESC').all().map(row => ({ ...row })); }
+  finally { db.close(); }
+}
 
-	const dbDir = path.join(cwd, "data");
-	fs.mkdirSync(dbDir, { recursive: true });
-	const dbPath = path.join(dbDir, stageInfo.db);
-	ensureTable(dbPath);
+export function readCycleRecord(cwd, stage, rowId) {
+  if (!validRowId(rowId)) return null;
+  const info = stageInfo(stage);
+  if (!info) return null;
+  const filename = path.join(cwd, 'data', info.db);
+  if (!fs.existsSync(filename)) return null;
+  const db = openDatabase(filename, { readOnly: true });
+  try {
+    const row = db.prepare('SELECT * FROM cycles WHERE id = ?').get(rowId);
+    return row ? { ...row } : null;
+  } finally { db.close(); }
+}
 
-	// role is derived strictly from stage, never a caller-supplied value —
-	// stage implies role in this fixed lifecycle (approach/planner,
-	// implementation/developer, feedback/tester, review/lead), and letting a
-	// caller override it would let e.g. a Developer attribute its own
-	// implementation row to "tester".
-	const role = stageInfo.defaultRole;
-	const payload = JSON.stringify(data ?? {});
-	const createdAt = new Date().toISOString();
-	const trimmedCycleId = typeof cycleId === "string" && cycleId.trim() ? cycleId.trim() : null;
-
-	const insertSql = `INSERT INTO cycles (cycle_id, role, stage, summary, payload, created_at) VALUES (${
-		trimmedCycleId ? quoteSqlString(trimmedCycleId) : "NULL"
-	}, ${quoteSqlString(role)}, ${quoteSqlString(stage)}, ${quoteSqlString(trimmedSummary)}, ${quoteSqlString(payload)}, ${quoteSqlString(createdAt)});`;
-	// last_insert_rowid() is scoped to the connection that did the insert — a
-	// separate `sqlite3` invocation opens a new connection and always reports
-	// 0. Run both statements in one invocation so they share a connection.
-	const rowId = execFileSync("sqlite3", [dbPath, `${insertSql}\nSELECT last_insert_rowid();`], { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
-
-	const result = {
-		ok: true,
-		table: "cycles",
-		dbPath: path.relative(cwd, dbPath),
-		rowId: Number(rowId),
-		stage,
-		role,
-		cycleId: trimmedCycleId,
-		createdAt,
-	};
-
-	appendHistoryEvent(cwd, {
-		event: "cycle_record",
-		stage,
-		role,
-		rowId: result.rowId,
-		cycleId: trimmedCycleId,
-		summary: trimmedSummary,
-	});
-
-	return result;
+export function verifyCycleEvidence(cwd, stage, rowId, { runId, cycleId } = {}) {
+  try {
+    const row = readCycleRecord(cwd, stage, rowId);
+    return !!row && row.stage === stage && row.role === STAGE_TABLE[stage].defaultRole
+      && (runId === undefined || row.run_id === runId)
+      && (cycleId === undefined || row.cycle_id === cycleId);
+  } catch { return false; }
 }

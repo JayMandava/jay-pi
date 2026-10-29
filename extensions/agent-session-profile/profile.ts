@@ -93,67 +93,68 @@ export function getSessionAgentSessionProfilePath(sessionId: string): string {
 }
 
 function readProfileAtPath(profilePath: string): AgentSessionProfile | null {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(fs.readFileSync(profilePath, "utf8")) as AgentSessionProfile | null;
-    if (parsed === null) {
-      return null;
-    }
-    if (!parsed || parsed.version !== 1 || !parsed.roles || typeof parsed.roles !== "object") {
-      return null;
-    }
-    return parsed;
+    parsed = JSON.parse(fs.readFileSync(profilePath, "utf8"));
   } catch {
-    return null;
+    throw new Error(`Cannot read agent profile: ${profilePath}. Repair or remove it before running agents.`);
   }
+  if (parsed === null) return null;
+  const profile = parsed as AgentSessionProfile;
+  if (!profile || profile.version !== 1 || !profile.roles || typeof profile.roles !== "object" || Array.isArray(profile.roles)) {
+    throw new Error(`Invalid agent profile: ${profilePath}. Expected version 1 and a roles object.`);
+  }
+  const runners = ["pi", "claude-cli"];
+  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+  for (const role of Object.values(profile.roles)) {
+    if (!role || typeof role !== "object" || Array.isArray(role)
+      || (role.runner !== undefined && !runners.includes(role.runner))
+      || (role.model !== undefined && (typeof role.model !== "string" || !role.model.trim()))
+      || (role.thinking !== undefined && !thinkingLevels.includes(role.thinking))) {
+      throw new Error(`Invalid role configuration in agent profile: ${profilePath}.`);
+    }
+  }
+  return profile;
 }
 
+/**
+ * Merge fields, not entire role maps: session > project > global. Source/path
+ * identify the highest participating layer, while profile contains the merge.
+ * An explicit session JSON null is the existing "clear this session" tombstone:
+ * it suppresses all inherited overrides. A null project/global file contributes
+ * no values. Malformed files are errors, never a silent fallback to another runner.
+ */
 export function resolveAgentSessionProfile(cwd: string, sessionId?: string): ResolvedAgentSessionProfile {
-  if (sessionId) {
-    const sessionPath = getSessionAgentSessionProfilePath(sessionId);
-    if (fs.existsSync(sessionPath)) {
-      return {
-        profile: readProfileAtPath(sessionPath),
-        source: "session",
-        path: sessionPath,
-        sessionId,
-      };
-    }
-  }
-
-  const projectPath = getProjectAgentSessionProfilePath(cwd);
-  if (projectPath && fs.existsSync(projectPath)) {
-    const profile = readProfileAtPath(projectPath);
-    if (profile) {
-      return {
-        profile,
-        source: "project",
-        path: projectPath,
-        sessionId,
-      };
-    }
-  }
-
   const globalPath = getGlobalAgentSessionProfilePath();
-  if (fs.existsSync(globalPath)) {
-    const profile = readProfileAtPath(globalPath);
-    if (profile) {
-      return {
-        profile,
-        source: "global",
-        path: globalPath,
-        sessionId,
-      };
+  const projectPath = getProjectAgentSessionProfilePath(cwd);
+  const sessionPath = sessionId ? getSessionAgentSessionProfilePath(sessionId) : null;
+  // A session clear must work even if a lower layer needs repair.
+  const sessionExists = !!sessionPath && fs.existsSync(sessionPath);
+  const sessionProfile = sessionExists ? readProfileAtPath(sessionPath!) : undefined;
+  if (sessionExists && sessionProfile === null) {
+    return { profile: null, source: "session", path: sessionPath!, sessionId };
+  }
+  const layers: Array<{ source: AgentSessionProfileSource; path: string; profile: AgentSessionProfile | null }> = [];
+  for (const [source, layerPath] of [["global", globalPath], ["project", projectPath]] as const) {
+    if (layerPath && fs.existsSync(layerPath)) {
+      layers.push({ source, path: layerPath, profile: readProfileAtPath(layerPath) });
     }
   }
-
-  return {
-    profile: null,
-    source: "none",
-    path: sessionId
-      ? getSessionAgentSessionProfilePath(sessionId)
-      : (projectPath || globalPath),
-    sessionId,
+  if (sessionExists) layers.push({ source: "session", path: sessionPath!, profile: sessionProfile! });
+  let resolved: ResolvedAgentSessionProfile = {
+    profile: null, source: "none", path: sessionPath || projectPath || globalPath, sessionId,
   };
+  for (const layer of layers) {
+    if (!layer.profile) continue;
+    const roles = { ...resolved.profile?.roles };
+    for (const [name, role] of Object.entries(layer.profile.roles)) {
+      Object.defineProperty(roles, name, {
+        value: { ...roles[name], ...role }, enumerable: true, writable: true, configurable: true,
+      });
+    }
+    resolved = { ...resolved, source: layer.source, path: layer.path, profile: { ...layer.profile, roles } };
+  }
+  return resolved;
 }
 
 export function getAgentSessionProfilePath(cwd: string, sessionId?: string): string {

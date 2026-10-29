@@ -14,11 +14,11 @@ import { MIN_SUMMARY_CHARS, STAGE_TABLE, writeCycleRecord } from "../../cycle-st
 //
 // The tool is named "record_cycle" here; Claude Code exposes MCP tools under
 // a server-name-prefixed identifier (mcp__<server>__<tool>), so
-// lifecycle-subagent's completion check matches on a suffix, not an exact
-// name — see hasSuccessfulCycleRecord in lifecycle-subagent/index.ts.
+// the shared runtime recognizes that exact trusted server/tool name and
+// verifies the persisted receipt — see hasVerifiedCycleRecord in harness/runtime.mjs.
 //
-// Runs with cwd inherited from the `claude` process that spawns it (set via
-// spawnClaudeAgent's own {cwd} option), so writeCycleRecord's cwd-relative
+// Runs with cwd inherited from the provider process that spawns it (the shared
+// runtime sets that process cwd), so writeCycleRecord's cwd-relative
 // data/ path resolves to the actual subagent run's working directory.
 
 const server = new Server({ name: "record-cycle", version: "1.0.0" }, { capabilities: { tools: {} } });
@@ -60,8 +60,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		return { content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }], isError: true };
 	}
 
-	// writeCycleRecord shells out to the sqlite3 CLI — an unexpected failure
-	// there (not found, permission denied, disk full, etc.) must not be
+	// writeCycleRecord uses Node SQLite — an unexpected storage failure
+	// (permission denied, disk full, etc.) must not be
 	// allowed to throw uncaught out of this handler: a single bad call
 	// crashing the whole server would take down every future record_cycle
 	// call for the rest of the session, not just this one.
@@ -80,10 +80,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		}
 
 		return {
+			structuredContent: result,
 			content: [
 				{
 					type: "text",
-					text: `Recorded ${result.stage} cycle row ${result.rowId} in ${result.dbPath}${result.cycleId ? ` (cycle ${result.cycleId})` : ""}.`,
+					text: JSON.stringify(result),
 				},
 			],
 		};

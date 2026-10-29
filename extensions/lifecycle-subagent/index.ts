@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -12,6 +13,7 @@ import { Type } from "typebox";
 
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { getLatestApproachRowId, isApproachRowApproved } from "../plan-approval.ts";
+import { hasVerifiedCycleRecord } from "../store/evidence.mjs";
 
 const CLAUDE_DEFAULT_MODEL = "claude-sonnet-4-6";
 const RUNS_DIR = path.join("data", "subagent-runs");
@@ -23,17 +25,19 @@ const RUNS_DIR = path.join("data", "subagent-runs");
 // (mcp__<server>__<tool>, confirmed live: "mcp__record-cycle__record_cycle"),
 // so matching on toolName needs to check for that suffix too, not just the
 // bare name the native pi tool uses.
-const RECORD_CYCLE_MCP_SERVER_PATH = fileURLToPath(new URL("./mcp/record-cycle-server/server.mjs", import.meta.url));
-
-function isRecordCycleToolName(name: unknown): boolean {
-  return name === "record_cycle" || (typeof name === "string" && name.endsWith("__record_cycle"));
-}
+// The server lives in extensions/mcp/, a sibling of this directory. Resolve it
+// package-relative and fail loudly if it is missing instead of handing claude a
+// path that silently never starts (which showed up as an "incomplete" run).
+const RECORD_CYCLE_MCP_SERVER_PATH = [
+  new URL("../mcp/record-cycle-server/server.mjs", import.meta.url),
+  new URL("./mcp/record-cycle-server/server.mjs", import.meta.url),
+].map((url) => fileURLToPath(url)).find((candidate) => fs.existsSync(candidate)) ?? fileURLToPath(new URL("../mcp/record-cycle-server/server.mjs", import.meta.url));
 
 // --strict-mcp-config confines the Claude subprocess to exactly this one
 // server — none of the user's own configured MCP servers (Notion, GitHub,
 // etc.) leak into a subagent run, matching the same restrictive posture the
 // native pi path gets from its --tools allowlist.
-function writeRecordCycleMcpConfig(): string {
+function writeRecordCycleMcpConfig(runId: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-mcp-"));
   const configPath = path.join(dir, "mcp-config.json");
   // claude spawns this MCP server in its own subprocess environment, which
@@ -45,7 +49,7 @@ function writeRecordCycleMcpConfig(): string {
   // which sidesteps PATH resolution entirely.
   fs.writeFileSync(
     configPath,
-    JSON.stringify({ mcpServers: { "record-cycle": { command: process.execPath, args: [RECORD_CYCLE_MCP_SERVER_PATH] } } }, null, 2),
+    JSON.stringify({ mcpServers: { "record-cycle": { command: process.execPath, args: [RECORD_CYCLE_MCP_SERVER_PATH], env: { PI_HARNESS_RUN_ID: runId } } } }, null, 2),
   );
   return configPath;
 }
@@ -79,8 +83,8 @@ const LIFECYCLE_STAGE_BY_ROLE: Record<string, string> = {
 // tested.
 const ENV_DENYLIST_PREFIXES: string[] = [];
 
-function scopedEnv(): NodeJS.ProcessEnv {
-	const env = { ...process.env };
+function scopedEnv(runId: string): NodeJS.ProcessEnv {
+	const env = { ...process.env, PI_HARNESS_RUN_ID: runId };
 	for (const key of Object.keys(env)) {
 		if (ENV_DENYLIST_PREFIXES.some((prefix) => key.startsWith(prefix))) {
 			delete env[key];
@@ -91,6 +95,17 @@ function scopedEnv(): NodeJS.ProcessEnv {
 const COLLECTOR_RUN_ID_PATTERN = /\brun_[a-z0-9]+\b/gi;
 const COLLECTOR_AGENT_NAME = "collector";
 const RUN_STATUS_POLL_MS = 1000;
+// Provider output is untrusted and unbounded; keep what a run record needs
+// (final result, stage proof) and mark truncation instead of growing forever.
+const MAX_STDERR_CHARS = 200_000;
+const MAX_RAW_STDOUT_CHARS = 8_000_000;
+const MAX_PENDING_LINE_CHARS = 8_000_000;
+
+function appendBounded(current: string, chunk: string, limit: number): string {
+  if (current.length >= limit) return current;
+  const next = current + chunk;
+  return next.length > limit ? `${next.slice(0, limit)}\n[truncated at ${limit} characters]` : next;
+}
 
 interface UsageStats {
   input: number;
@@ -153,7 +168,15 @@ interface SubagentDetails {
   runs?: Array<Pick<RunRecord, "runId" | "status" | "createdAt" | "updatedAt">>;
 }
 
-const activeRuns = new Map<string, { child: ChildProcess; artifactPath: string }>();
+// `record` is the same object the child's close handler mutates, so a cancel
+// can mark it in place. Cancelling a separately loaded copy let the handler
+// overwrite "canceled" with its own stale view.
+const activeRuns = new Map<string, { child: ChildProcess; artifactPath: string; record: RunRecord }>();
+
+function isChildAlive(runId: string): boolean {
+  const child = activeRuns.get(runId)?.child;
+  return !!child && child.exitCode === null && child.signalCode === null;
+}
 
 const ActionSchema = StringEnum(["catalog", "run", "status", "result", "cancel", "cleanup"] as const, {
   description: "subagent action",
@@ -206,7 +229,19 @@ function logHandoffFailure(cwd: string, runId: string, error: unknown): void {
   }
 }
 
+// Run IDs come from tool parameters, so they are untrusted: a value like
+// "../../x" must never reach a filesystem path. Paths are always derived from a
+// validated ID, never taken from a persisted record.
+const RUN_ID_PATTERN = /^run_[a-z0-9]{1,64}$/;
+
+function assertValidRunId(runId: unknown): asserts runId is string {
+  if (typeof runId !== "string" || !RUN_ID_PATTERN.test(runId)) {
+    throw new Error(`Invalid runId: ${JSON.stringify(String(runId).slice(0, 80))}`);
+  }
+}
+
 function getArtifactPath(cwd: string, runId: string): string {
+  assertValidRunId(runId);
   return path.join(ensureRunsDir(cwd), `${runId}.json`);
 }
 
@@ -215,7 +250,7 @@ function nowIso(): string {
 }
 
 function newRunId(): string {
-  return `run_${Math.random().toString(16).slice(2, 10)}`;
+  return `run_${randomBytes(4).toString("hex")}`;
 }
 
 function getFinalOutput(messages: Message[]): string {
@@ -243,35 +278,17 @@ function formatStatusLine(status: RunStatus, reason?: string): string {
   return `[status: ${status}]${reason ? ` ${reason}` : ""}`;
 }
 
-// Checking toolName alone isn't enough: a run is "successful" here only if
-// record_cycle was called for the STAGE this role owns. Correlate each
-// successful toolResult back to its originating toolCall via toolCallId to
-// read the stage argument that was actually passed — a Developer that calls
-// record_cycle with stage="feedback" (wrong stage, right tool) must not be
-// able to pass as a verified implementation record.
-function hasSuccessfulCycleRecord(messages: Message[], expectedStage: string): boolean {
-  const stageByCallId = new Map<string, unknown>();
-  for (const msg of messages as any[]) {
-    if (msg?.role !== "assistant" || !Array.isArray(msg?.content)) continue;
-    for (const part of msg.content) {
-      if (part?.type === "toolCall" && isRecordCycleToolName(part?.name) && part?.id) {
-        stageByCallId.set(part.id, (part?.arguments as any)?.stage);
-      }
-    }
-  }
-  return messages.some((msg: any) => {
-    if (msg?.role !== "toolResult" || !isRecordCycleToolName(msg?.toolName) || msg?.isError) return false;
-    return stageByCallId.get(msg?.toolCallId) === expectedStage;
-  });
-}
-
-function deriveCompletionStatus(agentName: string, gated: boolean, messages: Message[]): { status: RunStatus; reason?: string } {
+// A run is "successful" here only if record_cycle succeeded for the STAGE this
+// role owns AND the persisted row confirms it (same run, same stage, same
+// role). A prose claim, a hand-written sqlite3 row, a wrong-stage call or a
+// receipt from another run does not count. See store/evidence.mjs.
+function deriveCompletionStatus(cwd: string, runId: string, agentName: string, gated: boolean, messages: Message[]): { status: RunStatus; reason?: string } {
   if (!gated) return { status: "failed" };
   const stage = LIFECYCLE_STAGE_BY_ROLE[agentName];
-  if (stage && !hasSuccessfulCycleRecord(messages, stage)) {
+  if (stage && !hasVerifiedCycleRecord(cwd, messages, stage, runId)) {
     return {
       status: "incomplete",
-      reason: `Exited clean but no successful record_cycle call for stage "${stage}" was observed — the ${stage} DB record for this run may be missing (a record_cycle call for a different stage doesn't count). Not necessarily an error: some tasks legitimately don't produce one, but check before treating this run as a verified completion.`,
+      reason: `Exited clean but no verified record_cycle receipt for stage "${stage}" was found for this run — the ${stage} DB record may be missing (a call for a different stage, a row written by hand, or a receipt the database does not confirm doesn't count). Not necessarily an error: some tasks legitimately don't produce one, but check before treating this run as a verified completion.`,
     };
   }
   return { status: "completed" };
@@ -289,7 +306,12 @@ function getCollectorMonitoredRunIds(agentName: string, task: string, currentRun
 
 async function waitForRunTerminal(cwd: string, runId: string): Promise<RunRecord | null> {
   while (true) {
-    const record = loadRun(cwd, runId);
+    let record: RunRecord | null;
+    try {
+      record = loadRun(cwd, runId);
+    } catch {
+      return null; // corrupt record: stop waiting; callers already treat null as "no usable record"
+    }
     if (!record) return null;
     if (isTerminalRunStatus(record.status)) return record;
     await sleep(RUN_STATUS_POLL_MS);
@@ -307,18 +329,29 @@ async function waitForCollectorDependencyIfNeeded(record: RunRecord, result: Sin
   return true;
 }
 
+// Same-directory temp file + rename, so an interrupted write can never leave a
+// truncated record that later reads as "absent" or "unknown".
 function saveRun(record: RunRecord): void {
   record.updatedAt = nowIso();
-  fs.writeFileSync(record.artifactPath, JSON.stringify(record, null, 2));
+  const target = getArtifactPath(record.cwd, record.runId);
+  const tmp = `${target}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(record, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, target);
 }
 
+class CorruptRunError extends Error {}
+
+// null means "no such run"; a record that exists but cannot be parsed throws,
+// so corrupt state is reported as corrupt rather than as missing work.
 function loadRun(cwd: string, runId: string): RunRecord | null {
   const artifactPath = getArtifactPath(cwd, runId);
   if (!fs.existsSync(artifactPath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(artifactPath, "utf8")) as RunRecord;
-  } catch {
-    return null;
+    const record = JSON.parse(fs.readFileSync(artifactPath, "utf8")) as RunRecord;
+    if (!record || record.runId !== runId || !Array.isArray(record.results)) throw new Error("unexpected shape");
+    return record;
+  } catch (error) {
+    throw new CorruptRunError(`Run record ${runId} is unreadable or corrupt (${(error as Error).message}). Inspect ${artifactPath} before trusting or deleting it.`);
   }
 }
 
@@ -490,7 +523,7 @@ async function spawnPiAgent(
     cwd,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
-    env: scopedEnv(),
+    env: scopedEnv(record.runId),
   });
 
   record.pid = child.pid;
@@ -566,23 +599,25 @@ async function spawnPiAgent(
     buffer += data.toString();
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
+    if (buffer.length > MAX_PENDING_LINE_CHARS) buffer = ""; // one unterminated oversize line: drop it, keep the run alive
     for (const line of lines) processLine(line);
   });
 
   child.stderr?.on("data", (data) => {
-    result.stderr += data.toString();
+    result.stderr = appendBounded(result.stderr, data.toString(), MAX_STDERR_CHARS);
     saveRun(record);
   });
 
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     void (async () => {
       try {
         if (buffer.trim()) processLine(buffer);
-        result.exitCode = code ?? 0;
+        result.exitCode = code ?? 1;
+        if (code === null) record.statusReason = `Terminated by signal ${signal ?? "unknown"} — never reported as success.`;
         if (record.status !== "canceled") {
           if (result.exitCode === 0) {
             const gated = await waitForCollectorDependencyIfNeeded(record, result);
-            const derived = deriveCompletionStatus(result.agent, gated, result.messages);
+            const derived = deriveCompletionStatus(record.cwd, record.runId, result.agent, gated, result.messages);
             record.status = derived.status;
             record.statusReason = derived.reason;
           } else {
@@ -620,7 +655,7 @@ async function spawnClaudeAgent(
   const model = agent.model || CLAUDE_DEFAULT_MODEL;
   result.model = model;
 
-  const mcpConfigPath = writeRecordCycleMcpConfig();
+  const mcpConfigPath = writeRecordCycleMcpConfig(record.runId);
 
   const child = spawn(
     "claude",
@@ -633,7 +668,7 @@ async function spawnClaudeAgent(
       "--mcp-config", mcpConfigPath,
       "--strict-mcp-config",
     ],
-    { cwd, shell: false, stdio: ["pipe", "pipe", "pipe"], env: scopedEnv() },
+    { cwd, shell: false, stdio: ["pipe", "pipe", "pipe"], env: scopedEnv(record.runId) },
   );
 
   const cleanupMcpConfig = () => {
@@ -680,7 +715,7 @@ async function spawnClaudeAgent(
     }
 
     if (event.type === "assistant" && event.message) {
-      const parts: Message["content"] = [];
+      const parts: any[] = [];
       for (const part of event.message.content ?? []) {
         if (part.type === "text") {
           parts.push({ type: "text", text: part.text });
@@ -726,7 +761,13 @@ async function spawnClaudeAgent(
     if (event.type === "user" && event.message && Array.isArray(event.message.content)) {
       for (const part of event.message.content) {
         if (part.type !== "tool_result") continue;
-        const content = typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "");
+        // MCP results arrive as an array of {type:"text",text} parts; join the
+        // text so a JSON receipt stays parseable instead of being re-encoded.
+        const content = typeof part.content === "string"
+          ? part.content
+          : Array.isArray(part.content) && part.content.every((item: any) => item?.type === "text" && typeof item.text === "string")
+            ? part.content.map((item: any) => item.text).join("\n")
+            : JSON.stringify(part.content ?? "");
         result.messages.push({
           role: "toolResult",
           toolCallId: part.tool_use_id,
@@ -751,22 +792,24 @@ async function spawnClaudeAgent(
   let buffer = "";
   child.stdout?.on("data", (data) => {
     const text = data.toString();
-    rawStdout += text;
+    rawStdout = appendBounded(rawStdout, text, MAX_RAW_STDOUT_CHARS);
     buffer += text;
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
+    if (buffer.length > MAX_PENDING_LINE_CHARS) buffer = "";
     for (const line of lines) processClaudeLine(line);
   });
 
   child.stderr?.on("data", (data) => {
-    result.stderr += data.toString();
+    result.stderr = appendBounded(result.stderr, data.toString(), MAX_STDERR_CHARS);
     saveRun(record);
   });
 
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     void (async () => {
       if (buffer.trim()) processClaudeLine(buffer);
-      result.exitCode = code ?? 0;
+      result.exitCode = code ?? 1;
+      if (code === null) record.statusReason = `Terminated by signal ${signal ?? "unknown"} — never reported as success.`;
 
       // Parsing failed entirely (unexpected output shape, older claude CLI,
       // etc.) — fall back to the raw text blob rather than losing the run.
@@ -790,7 +833,7 @@ async function spawnClaudeAgent(
       if (record.status !== "canceled") {
         if (result.exitCode === 0 && !sawError) {
           const gated = await waitForCollectorDependencyIfNeeded(record, result);
-          const derived = deriveCompletionStatus(result.agent, gated, result.messages);
+          const derived = deriveCompletionStatus(record.cwd, record.runId, result.agent, gated, result.messages);
           record.status = derived.status;
           record.statusReason = derived.reason;
         } else {
@@ -838,7 +881,7 @@ async function startRun(
     ? await spawnClaudeAgent(cwd, agent, task, result, record, onUpdate)
     : await spawnPiAgent(cwd, agent, task, result, record, onUpdate);
 
-  activeRuns.set(record.runId, { child, artifactPath: record.artifactPath });
+  activeRuns.set(record.runId, { child, artifactPath: record.artifactPath, record });
 
   child.on("close", () => {
     void (async () => {
@@ -896,6 +939,18 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+      try {
+        return await executeSubagent(params, onUpdate, ctx);
+      } catch (error) {
+        if (error instanceof CorruptRunError || /^Invalid runId/.test((error as Error)?.message ?? "")) {
+          return { content: [{ type: "text", text: (error as Error).message }], isError: true };
+        }
+        throw error;
+      }
+    },
+  });
+
+  async function executeSubagent(params: any, onUpdate: any, ctx: any): Promise<any> {
       const action = params.action;
       const agentScope = (params.agentScope ?? "both") as AgentScope;
 
@@ -977,16 +1032,26 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
             isError: true,
           };
         }
+        if (isTerminalRunStatus(record.status)) {
+          return {
+            content: [{ type: "text", text: `${params.runId} already ${record.status}; nothing to cancel.` }],
+            details: { action, runId: record.runId, status: record.status, artifactPath: record.artifactPath } satisfies SubagentDetails,
+          };
+        }
+        // Only a child this session started is signalled. A persisted PID from
+        // an earlier session may have been reused by an unrelated process.
         const active = activeRuns.get(params.runId);
+        if (!active?.child.pid) {
+          return {
+            content: [{ type: "text", text: `${params.runId} is not owned by this session, so no process was signalled. If its process is gone, restart pi to mark it orphaned; otherwise stop it from the session that started it.` }],
+            isError: true,
+          };
+        }
+        active.record.status = "canceled"; // in place, so the close handler cannot overwrite it
+        saveRun(active.record);
         try {
-          if (active?.child.pid) {
-            active.child.kill("SIGTERM");
-          } else if (record.pid) {
-            process.kill(record.pid, "SIGTERM");
-          }
+          active.child.kill("SIGTERM");
         } catch {}
-        record.status = "canceled";
-        saveRun(record);
         return {
           content: [{ type: "text", text: `Canceled ${params.runId}` }],
           details: {
@@ -1005,6 +1070,9 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
       if (action === "cleanup") {
         if (params.runId) {
           const artifactPath = getArtifactPath(ctx.cwd, params.runId);
+          if (isChildAlive(params.runId)) {
+            return { content: [{ type: "text", text: `${params.runId} is still active; cancel it before cleanup.` }], isError: true };
+          }
           if (fs.existsSync(artifactPath)) fs.unlinkSync(artifactPath);
           return {
             content: [{ type: "text", text: `Removed ${params.runId}` }],
@@ -1013,9 +1081,9 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
         }
         const removed: string[] = [];
         for (const run of listRuns(ctx.cwd)) {
-          if (run.status === "running") continue;
+          if (run.status === "running" || isChildAlive(run.runId)) continue;
           try {
-            fs.unlinkSync(run.artifactPath);
+            fs.unlinkSync(getArtifactPath(ctx.cwd, run.runId)); // derived from the validated id, never the persisted artifactPath
             removed.push(run.runId);
           } catch {}
         }
@@ -1049,8 +1117,16 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
         };
       }
 
-      const confirmProjectAgents = params.confirmProjectAgents ?? true;
-      if (agent.source === "project" && confirmProjectAgents && ctx.hasUI) {
+      // Project-local agents are repository-controlled prompts. The confirmation
+      // is not skippable by the model (confirmProjectAgents=false is ignored) and
+      // a headless session cannot give it, so it refuses instead of running.
+      if (agent.source === "project") {
+        if (!ctx.hasUI) {
+          return {
+            content: [{ type: "text", text: "Refusing to run a project-local agent without an interactive confirmation. Use a user-level agent or run in an interactive session." }],
+            isError: true,
+          };
+        }
         const ok = await ctx.ui.confirm(
           "Run project-local agent?",
           `Agent: ${agent.name}\nSource: ${discovery.projectAgentsDir ?? "(unknown)"}\n\nOnly continue for trusted repositories.`,
@@ -1185,8 +1261,7 @@ export default function lifecycleSubagent(pi: ExtensionAPI) {
         } satisfies SubagentDetails,
         isError: finalRecord.status === "failed" || finalRecord.status === "orphaned",
       };
-    },
-  });
+  }
 
   pi.registerCommand("subagent-runs", {
     description: "List saved subagent runs",

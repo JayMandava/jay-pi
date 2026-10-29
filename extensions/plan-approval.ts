@@ -1,115 +1,35 @@
-import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
+import { getLatestApproach, approveApproach, isApproachApproved } from './store/approval-store.mjs';
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-
-import { appendHistoryEvent } from "./cycle-store.mjs";
-
-// Code-enforced version of "Lead just doesn't invoke Developer before the
-// plan is approved" — today that's a pure convention with nothing behind it
-// but Lead's own discipline. This ties an explicit approval record to the
-// exact approach.db row it approves (not just "some plan was approved at
-// some point"), and lifecycle-subagent's `run` action refuses to spawn
-// Developer unless the *latest* approach row has one.
-//
-// Deliberately tied to a specific row id, not just "has approval ever
-// happened": if Planner revises the plan (a new approach row lands after a
-// prior approval), that older approval must not silently keep authorizing
-// Developer against a plan that no longer exists in that form.
-
-function getApprovalsDbPath(cwd: string): string {
-	return path.join(cwd, "data", "approvals.db");
+export function getLatestApproachRowId(cwd: string): number | null {
+  try { return getLatestApproach(cwd)?.id ?? null; } catch { return null; }
 }
-
-function ensureApprovalsTable(dbPath: string): void {
-	const sql = `CREATE TABLE IF NOT EXISTS approvals (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		approach_row_id INTEGER NOT NULL,
-		approved_at TEXT NOT NULL
-	);`;
-	// stdio is explicit on every sqlite3 call in this file: execFileSync inherits the child's stderr
-	// by default, which writes straight to the terminal and corrupts pi's TUI (e.g. "no such table").
-	execFileSync("sqlite3", [dbPath, sql], { stdio: ["ignore", "pipe", "pipe"] });
-}
-
-function getLatestApproachRowId(cwd: string): number | null {
-	const dbPath = path.join(cwd, "data", "approach.db");
-	if (!fs.existsSync(dbPath)) return null;
-	try {
-		const out = execFileSync("sqlite3", [dbPath, "SELECT id FROM cycles ORDER BY id DESC LIMIT 1;"], { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
-		return out ? Number(out) : null;
-	} catch {
-		return null;
-	}
-}
-
-// Exported so lifecycle-subagent's Developer-spawn guard can check the same
-// thing this tool writes, without re-deriving the logic.
-export function isApproachRowApproved(cwd: string, approachRowId: number): boolean {
-	const dbPath = getApprovalsDbPath(cwd);
-	if (!fs.existsSync(dbPath)) return false;
-	try {
-		const out = execFileSync("sqlite3", [dbPath, `SELECT 1 FROM approvals WHERE approach_row_id = ${approachRowId} LIMIT 1;`], {
-			stdio: ["ignore", "pipe", "pipe"],
-		})
-			.toString()
-			.trim();
-		return out === "1";
-	} catch {
-		return false;
-	}
-}
-
-export { getLatestApproachRowId };
+export const isApproachRowApproved = isApproachApproved;
 
 const ApprovePlanParams = Type.Object({
-	approachRowId: Type.Optional(
-		Type.Integer({ description: "The specific approach.db row id to approve. Defaults to the latest row if omitted." }),
-	),
+  approachRowId: Type.Optional(Type.Integer({ minimum: 1, description: 'The latest approach.db row to review and approve.' })),
 });
 
 export default function planApproval(pi: ExtensionAPI) {
-	pi.registerTool({
-		name: "approve_plan",
-		label: "Approve plan",
-		description:
-			"Record that the human has approved the plan in approach.db (the latest row, or a specific one via approachRowId) — this is what unblocks spawning the Developer subagent. Call this only after a real Grilling Discipline review with the human, never on a subagent's own say-so.",
-		parameters: ApprovePlanParams,
-
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!ctx.hasUI) {
-				return {
-					content: [{ type: "text", text: "approve_plan requires an interactive session — a background subagent cannot self-approve a plan." }],
-					isError: true,
-				};
-			}
-
-			const rowId = params.approachRowId ?? getLatestApproachRowId(ctx.cwd);
-			if (rowId === null) {
-				return {
-					content: [{ type: "text", text: "No approach.db row found to approve — Planner hasn't recorded a plan yet." }],
-					isError: true,
-				};
-			}
-
-			const dbPath = getApprovalsDbPath(ctx.cwd);
-			fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-			ensureApprovalsTable(dbPath);
-			const approvedAt = new Date().toISOString();
-			execFileSync(
-				"sqlite3",
-				[dbPath, `INSERT INTO approvals (approach_row_id, approved_at) VALUES (${rowId}, '${approvedAt}');`],
-				{ stdio: ["ignore", "pipe", "pipe"] },
-			);
-
-			appendHistoryEvent(ctx.cwd, { event: "plan_approved", approachRowId: rowId, approvedAt });
-
-			return {
-				content: [{ type: "text", text: `Approved approach.db row ${rowId} at ${approvedAt}. Developer can now be spawned for this plan.` }],
-				details: { approachRowId: rowId, approvedAt },
-			};
-		},
-	});
+  pi.registerTool({
+    name: 'approve_plan',
+    label: 'Approve plan',
+    description: 'Record the human\'s approval of the latest plan, after a real Grilling Discipline review. Approval is bound to the row and its content digest, so a revised plan needs a fresh approval; background agents cannot self-approve.',
+    parameters: ApprovePlanParams,
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const fail = (text: string) => ({ details: undefined, content: [{ type: 'text' as const, text }], isError: true });
+      if (signal?.aborted) return fail('Plan approval canceled before review. Developer remains blocked.');
+      if (!ctx.hasUI) return fail('approve_plan requires an interactive session — a background subagent cannot self-approve a plan.');
+      try {
+        const plan = getLatestApproach(ctx.cwd);
+        if (!plan) return fail('No approach.db row found to approve — Planner has not recorded a plan yet.');
+        if (params.approachRowId !== undefined && params.approachRowId !== plan.id) return fail('Only the latest existing plan may be approved. Review the latest plan first.');
+        // The human review already happened in the Lead's grill session; this call only records it.
+        // Binding to the row's content digest means a plan revised afterwards is not covered.
+        const result = approveApproach(ctx.cwd, plan.id, { confirmed: true, actor: 'interactive-human', expectedDigest: plan.digest });
+        return { content: [{ type: 'text' as const, text: `Approved approach.db row ${plan.id} at ${result.approvedAt}. Developer can now execute this plan.` }], details: result };
+      } catch (error) { return fail(`Plan approval failed: ${error instanceof Error ? error.message : String(error)}`); }
+    },
+  });
 }

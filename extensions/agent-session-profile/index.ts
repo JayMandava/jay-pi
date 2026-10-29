@@ -3,9 +3,9 @@ import * as path from "node:path";
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
 
 import { discoverAgents } from "./agent-discovery.ts";
+import { scopedModelRefs } from "./model-patterns.mjs";
 import { buildClaudeModelOptions, queryClaudeCliModels } from "./claude-models.ts";
 import {
   clearAgentSessionProfile,
@@ -133,12 +133,7 @@ async function getScopedModelRefs(ctx: ExtensionContext): Promise<string[]> {
   if (patterns.length === 0) {
     return [];
   }
-  const { scopedModels } = await resolveModelScopeWithDiagnostics(patterns, ctx.modelRegistry);
-  const refs = new Set<string>();
-  for (const { model } of scopedModels) {
-    refs.add(`${(model as Model<Api> & { provider?: string }).provider}/${model.id}`);
-  }
-  return Array.from(refs).sort((left, right) => left.localeCompare(right));
+  return scopedModelRefs(patterns, ctx.modelRegistry.getAvailable());
 }
 
 async function chooseClaudeModel(ctx: ExtensionContext, initialValue: string): Promise<string | null> {
